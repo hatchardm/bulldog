@@ -59,11 +59,3 @@ This fix should be applied at line 91 of loc_api/lib.rs. It resolves build error
 
 📜 License
 This project is licensed under the MIT License.
-
-Code
-
----
-
-Once you’ve pasted this into your local `README.md`, run:
-
-```bash
