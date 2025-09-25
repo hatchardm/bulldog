@@ -26,10 +26,11 @@ MARKOSPRINT is a custom operating system kernel written in Rust, focused on safe
 
 ## 🛠️ Build & Run Instructions
 
-Ensure you're using nightly Rust:
+Ensure you're using nightly Rust with the llvm-tools-preview component
 
 ```bash
 rustup override set nightly
+rustup component add llvm-tools-preview.
 Then build and run with:
 
 bash
