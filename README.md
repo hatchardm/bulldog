@@ -12,30 +12,17 @@ To build Bulldog, you’ll need:
 
 - A **nightly Rust compiler**
 - The `llvm-tools-preview` component
-- A cross-compilation target: `x86_64-bulldog`
+
 
 Install the required Rust component:
 
 ```bash
 rustup component add llvm-tools-preview
 
-Set up the target architecture:
 
 bash
-rustup target add x86_64-bulldog
 
-🧰 Optional: Binary Inspection Tools
-To inspect and disassemble the kernel binary, install cargo-binutils:
 
-bash
-cargo install cargo-binutils
-
-Then use:
-
-bash
-cargo objdump -- -d target/x86_64-bulldog/debug/kernel
-cargo size -- target/x86_64-bulldog/debug/kernel
-These commands let you view disassembly and symbol sizes without manually locating LLVM binaries.
 
 🛠 Build Instructions
 Clone the repo:
@@ -47,7 +34,7 @@ cd bulldog
 Build the kernel:
 
 bash
-cargo build --target x86_64-bulldog
+cargo build -Z bindeps
 
 🧪 Compatibility Notes
 🔧 loc_api Nightly Feature Fix
@@ -64,19 +51,7 @@ rust
 
 Ensure your Cargo.toml enables the nightly feature:
 
-toml
-[features]
-nightly = []
-📚 Project Structure
-src/ — Kernel source code
 
-arch/ — Architecture-specific setup (GDT, TSS, paging, etc.)
-
-boot/ — Bootloader and entry point
-
-docs/ — Documentation and design notes
-
-.gitignore — Cleaned for Rust and kernel artifacts
 
 🧭 Roadmap
 [x] Paging and memory management

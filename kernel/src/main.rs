@@ -43,6 +43,7 @@ fn kernel_main(boot_info: &'static mut bootloader_api::info::BootInfo) -> ! {
     use kernel::stack::get_stack_start;
 
 
+
     // Initialize framebuffer
     framebuffer::init(boot_info.framebuffer.as_mut().unwrap());
 

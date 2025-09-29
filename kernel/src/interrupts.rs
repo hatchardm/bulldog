@@ -10,6 +10,9 @@ use crate::hlt_loop;
 pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
 
+
+pub const LAPIC_TIMER_VECTOR: u8 = 0x30;
+
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum InterruptIndex {
@@ -68,6 +71,8 @@ lazy_static! {
 
     idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
     idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
+    
+    idt[LAPIC_TIMER_VECTOR as usize].set_handler_fn(lapic_timer_handler);
 
   
 
@@ -243,4 +248,11 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
 
 }
 
+extern "x86-interrupt" fn lapic_timer_handler(_stack_frame: InterruptStackFrame) {
+    // Acknowledge the interrupt
+    crate::apic::apic::send_eoi();
+
+    // Optional: increment a tick counter or log
+    //crate::time::tick(); // if you have a time module
+}
 

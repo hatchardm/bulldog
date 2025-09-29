@@ -18,12 +18,16 @@ pub mod allocator;
 pub mod memory;
 pub mod task;
 pub mod stack;
+pub mod apic;
+use crate::apic::apic::init as setup_apic;
+
 
 pub fn init() {
     
     gdt::init();
     interrupts::init_idt();
     init_pit();
+    setup_apic();
     x86_64::instructions::interrupts::enable();
 }
 
