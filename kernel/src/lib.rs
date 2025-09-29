@@ -10,6 +10,7 @@ extern crate alloc;
 extern crate rlibc;
 
 use x86_64::instructions::port::Port;
+use crate::interrupts::LAPIC_TIMER_VECTOR;
 
 pub mod framebuffer;
 pub mod interrupts;
@@ -19,15 +20,25 @@ pub mod memory;
 pub mod task;
 pub mod stack;
 pub mod apic;
+use crate::memory::init_offset_page_table;
+use crate::memory::map_lapic_mmio;
+use x86_64::structures::paging::PageTableFlags;
+use x86_64::VirtAddr;
 use crate::apic::apic::init as setup_apic;
+
 
 
 pub fn init() {
     
     gdt::init();
     interrupts::init_idt();
-    init_pit();
+    let phys_mem_offset = VirtAddr::new(0xFFFF800000000000); // adjust to Bulldog’s actual offset
+    let mut mapper = unsafe { init_offset_page_table(phys_mem_offset) };
+    map_lapic_mmio(&mut mapper);
     setup_apic();
+
+    
+
     x86_64::instructions::interrupts::enable();
 }
 
@@ -37,16 +48,7 @@ pub fn hlt_loop() -> ! {
     }
 }
 
-pub fn init_pit() {
-    let mut command = Port::new(0x43);
-    let mut channel0 = Port::new(0x40);
-    unsafe {
-        command.write(0x36u8); // Set PIT to mode 3 (square wave)
-        let divisor: u16 = (1193182u32 / 100) as u16; // 100Hz
-        channel0.write((divisor & 0xFF) as u8); // low byte
-        channel0.write((divisor >> 8) as u8);   // high byte
-    }
-}
+
 
 
 

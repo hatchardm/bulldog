@@ -25,7 +25,6 @@ use core::panic::PanicInfo;
     use kernel::init;
     use kernel::task::{executor::Executor, keyboard, Task};
     use kernel::framebuffer;
-    use kernel::interrupts::PICS;
     use kernel::gdt;
     use crate::gdt::STACK_SIZE;
    
@@ -51,12 +50,7 @@ fn kernel_main(boot_info: &'static mut bootloader_api::info::BootInfo) -> ! {
     println!("LOADING BULLDOG");
     println!("   ");
 
-    // Unmask timer and keyboard interrupts
-    unsafe {
-        PICS.lock().initialize();
-        PICS.lock().write_masks(0b1111_1100, 0b1111_1111);
-    }
-
+   
     // Initialize paging and frame allocator
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset.into_option().unwrap());
     let mut mapper = unsafe { memory::init(phys_mem_offset) };

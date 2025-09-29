@@ -1,11 +1,15 @@
 
-
 use bootloader_api::info::{MemoryRegion, MemoryRegionKind};
 use x86_64::{
     structures::paging::{
-        FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PhysFrame, Size4KiB,
+        FrameAllocator, Mapper, Page, PageTableFlags, PhysFrame, Size4KiB,
     },
     PhysAddr, VirtAddr,
+};
+
+use x86_64::{
+    structures::paging::{OffsetPageTable, PageTable},
+    registers::control::Cr3,
 };
 
 /// Initialize a new OffsetPageTable.
@@ -36,6 +40,15 @@ unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut
 
     &mut *page_table_ptr // unsafe
 }
+
+/// Initializes an OffsetPageTable using the given physical memory offset.
+pub unsafe fn init_offset_page_table(physical_memory_offset: VirtAddr) -> OffsetPageTable<'static> {
+    OffsetPageTable::new(
+        active_level_4_table(physical_memory_offset),
+        physical_memory_offset,
+    )
+}
+
 
 /// Creates an example mapping for the given page to frame `0xb8000`.
 pub fn create_example_mapping(
@@ -106,3 +119,30 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
         frame
     }
 }
+
+pub fn map_lapic_mmio(mapper: &mut impl Mapper<Size4KiB>) {
+    let lapic_phys = PhysAddr::new(0xfee00000);
+    let lapic_virt = VirtAddr::new(0xfee00000);
+
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+
+    map_page(mapper, lapic_virt, lapic_phys, flags);
+}
+
+pub fn map_page(
+    mapper: &mut impl Mapper<Size4KiB>,
+    virt: VirtAddr,
+    phys: PhysAddr,
+    flags: PageTableFlags,
+) {
+    let page = Page::containing_address(virt);
+    let frame = PhysFrame::containing_address(phys);
+
+    unsafe {
+        mapper
+            .map_to(page, frame, flags, &mut EmptyFrameAllocator)
+            .expect("map_page failed")
+            .flush();
+    }
+}
+

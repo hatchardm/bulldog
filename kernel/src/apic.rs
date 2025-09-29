@@ -34,6 +34,8 @@ pub mod apic {
 
     // Set initial count (e.g., 10 million ticks)
     lapic_write(LapicRegister::INITIAL_COUNT, 10_000_000);
+
+    lapic_write(LapicRegister::LVT_TIMER, LAPIC_TIMER_VECTOR as u32);
 }
 
 
