@@ -23,24 +23,55 @@ pub mod apic;
 use crate::memory::init_offset_page_table;
 use crate::memory::map_lapic_mmio;
 use x86_64::structures::paging::PageTableFlags;
-use x86_64::VirtAddr;
 use crate::apic::apic::init as setup_apic;
+use crate::memory::BootInfoFrameAllocator;
+use bootloader_api::BootInfo;
+use x86_64::structures::paging::FrameAllocator;
+use x86_64::structures::paging::mapper::Mapper;
+use bootloader_api::info::MemoryRegion;
+use x86_64::{VirtAddr, structures::paging::Size4KiB, structures::paging::mapper::MapToError};
 
 
 
-pub fn init() {
-    
+pub fn init(
+    memory_regions: &'static [MemoryRegion],
+    physical_memory_offset: VirtAddr,
+) -> Result<(), MapToError<Size4KiB>> {
+    use crate::{gdt, interrupts, memory, stack};
+    use x86_64::structures::paging::{Page, PageTableFlags};
+
     gdt::init();
     interrupts::init_idt();
-    let phys_mem_offset = VirtAddr::new(0xFFFF800000000000); // adjust to Bulldog’s actual offset
-    let mut mapper = unsafe { init_offset_page_table(phys_mem_offset) };
-    map_lapic_mmio(&mut mapper);
-    setup_apic();
 
-    
+    let mut mapper = unsafe { memory::init_offset_page_table(physical_memory_offset) };
+    let mut frame_allocator = unsafe { memory::BootInfoFrameAllocator::init(memory_regions) };
 
+    // Map LAPIC MMIO
+    memory::map_lapic_mmio(&mut mapper);
+
+    // Map LAPIC IST stack
+    let lapic_stack_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(stack::LAPIC_STACK.0) });
+    let lapic_stack_end = lapic_stack_start + gdt::STACK_SIZE;
+    let lapic_stack_range = Page::range_inclusive(
+        Page::containing_address(lapic_stack_start),
+        Page::containing_address(lapic_stack_end - 1u64),
+    );
+
+    for page in lapic_stack_range {
+        let frame = frame_allocator
+            .allocate_frame()
+            .expect("Failed to allocate frame for LAPIC stack");
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+        unsafe {
+            mapper.map_to(page, frame, flags, &mut frame_allocator)?.flush();
+        }
+    }
+
+    crate::setup_apic();
     x86_64::instructions::interrupts::enable();
+    Ok(())
 }
+
 
 pub fn hlt_loop() -> ! {
     loop {

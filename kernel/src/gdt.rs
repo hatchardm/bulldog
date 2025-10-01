@@ -2,22 +2,30 @@ use lazy_static::lazy_static;
 use x86_64::structures::gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector};
 use x86_64::structures::tss::TaskStateSegment;
 use x86_64::VirtAddr;
-use crate::stack::STACK;
+use crate::stack::{STACK, LAPIC_STACK};
 
 
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
-
 pub const STACK_SIZE: usize = 128 * 1024;
-
+pub const LAPIC_IST_INDEX: u16 = 1;
 
 
     lazy_static! {
     static ref TSS: TaskStateSegment = {
         let mut tss = TaskStateSegment::new();
-        let stack_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(STACK.0) });
-        let stack_end = stack_start + STACK_SIZE;
-        assert_eq!(stack_end.as_u64() % 16, 0);
-        tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = stack_end;
+
+        // Double fault stack
+        let df_stack_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(STACK.0) });
+        let df_stack_end = df_stack_start + STACK_SIZE;
+        assert_eq!(df_stack_end.as_u64() % 16, 0);
+        tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = df_stack_end;
+
+        // LAPIC timer stack
+        let lapic_stack_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(LAPIC_STACK.0) });
+        let lapic_stack_end = lapic_stack_start + STACK_SIZE;
+        assert_eq!(lapic_stack_end.as_u64() % 16, 0);
+        tss.interrupt_stack_table[LAPIC_IST_INDEX as usize] = lapic_stack_end;
+
         tss
     };
 }

@@ -2,7 +2,7 @@
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use lazy_static::lazy_static;
 use spin;
-use crate::gdt::DOUBLE_FAULT_IST_INDEX;
+use crate::gdt::{DOUBLE_FAULT_IST_INDEX, LAPIC_IST_INDEX};
 use crate::{print, println};
 use crate::hlt_loop;
 use crate::apic::apic::send_eoi;
@@ -44,7 +44,11 @@ lazy_static! {
 
     
     
-    idt[LAPIC_TIMER_VECTOR as usize].set_handler_fn(lapic_timer_handler as _);
+  unsafe {
+    idt[LAPIC_TIMER_VECTOR as usize]
+    .set_handler_fn(lapic_timer_handler)
+    .set_stack_index(LAPIC_IST_INDEX);
+  }
 
   
 
