@@ -28,6 +28,8 @@ use x86_64::structures::paging::FrameAllocator;
 
 
 // 🛠 Bootloader configuration
+use bootloader_api::config:: FrameBuffer;
+
 const CONFIG: BootloaderConfig = {
     let mut config = BootloaderConfig::new_default();
     config.kernel_stack_size = 100 * 1024; // 100 KiB
@@ -35,14 +37,28 @@ const CONFIG: BootloaderConfig = {
     config
 };
 
+
+
+
 entry_point!(kernel_main, config = &CONFIG);
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // ✅ Framebuffer first—enables println!()
     let framebuffer = boot_info.framebuffer.as_mut().unwrap();
-    framebuffer::init(framebuffer);
 
-    println!("\nLOADING BULLDOG\n");
+// Extract info before init to avoid borrow conflict
+let fb_info = framebuffer.info();
+let fb_ptr = framebuffer.buffer().as_ptr() as usize;
+
+framebuffer::init(framebuffer); // Must come before println! so output works
+println!("LOADING BULLDOG KERNEL");
+println!("Framebuffer physical address: {:#x}", fb_ptr);
+println!("Framebuffer range: {:#x} - {:#x}", fb_ptr, fb_ptr + fb_info.byte_len);
+
+
+
+
+
 
     // ✅ Extract memory info early to avoid borrow conflicts
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset.into_option().unwrap());

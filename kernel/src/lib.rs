@@ -47,7 +47,8 @@ pub fn init(
     let mut frame_allocator = unsafe { memory::BootInfoFrameAllocator::init(memory_regions) };
 
     // Map LAPIC MMIO
-    memory::map_lapic_mmio(&mut mapper);
+    memory::map_lapic_mmio(&mut mapper, &mut frame_allocator);
+
 
     // Map LAPIC IST stack
     let lapic_stack_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(stack::LAPIC_STACK.0) });
@@ -87,5 +88,6 @@ pub fn hlt_loop() -> ! {
 
 #[alloc_error_handler]
 fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
+    println!("PANIC: allocation error — size: {}, align: {}", layout.size(), layout.align());
     panic!("allocation error: {:?}", layout)
 }
