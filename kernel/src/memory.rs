@@ -48,27 +48,41 @@ unsafe impl FrameAllocator<Size4KiB> for EmptyFrameAllocator {
     }
 }
 
-/// A FrameAllocator that returns usable frames from the bootloader's memory map.
-pub struct BootInfoFrameAllocator {
-    memory_map: &'static [MemoryRegion],
-    frames: Vec<PhysFrame>,
-    next: usize,
+pub struct PreHeapAllocator {
+    pub memory_map: &'static [MemoryRegion],
+    pub frames: [Option<PhysFrame>; 512],
+    pub next: usize,
 }
 
-impl BootInfoFrameAllocator {
-    /// Create a FrameAllocator from the passed memory map.
-    ///
-    /// # Safety
-    /// Caller must ensure all `USABLE` frames are truly unused.
-    pub unsafe fn init(memory_map: &'static [MemoryRegion]) -> Self {
-        let frames = memory_map
-            .iter()
-            .filter(|r| r.kind == MemoryRegionKind::Usable)
-            .flat_map(|r| (r.start..r.end).step_by(4096))
-            .map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
-            .filter(|frame| frame.start_address().as_u64() >= 0x10000)
-            .collect();
+pub struct BootInfoFrameAllocator {
+    pub memory_map: &'static [MemoryRegion],
+    pub frames: Vec<PhysFrame>,
+    pub next: usize,
+}
 
+impl PreHeapAllocator {
+    pub fn into_vec(self) -> Vec<PhysFrame> {
+        self.frames.iter().filter_map(|&f| f).collect()
+    }
+}
+
+
+unsafe impl FrameAllocator<Size4KiB> for PreHeapAllocator {
+    fn allocate_frame(&mut self) -> Option<PhysFrame> {
+        while self.next < self.frames.len() {
+            if let Some(frame) = self.frames[self.next].take() {
+                self.next += 1;
+                return Some(frame);
+            }
+            self.next += 1;
+        }
+        None
+    }
+}
+
+
+impl BootInfoFrameAllocator {
+    pub fn new(memory_map: &'static [MemoryRegion], frames: Vec<PhysFrame>) -> Self {
         BootInfoFrameAllocator {
             memory_map,
             frames,
@@ -77,12 +91,107 @@ impl BootInfoFrameAllocator {
     }
 }
 
-unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
-    fn allocate_frame(&mut self) -> Option<PhysFrame> {
-        let frame = self.frames.get(self.next).cloned();
-        self.next += 1;
-        frame
+impl BootInfoFrameAllocator {
+    pub fn into_vec(self) -> Vec<PhysFrame> {
+        self.frames
     }
+}
+
+
+
+impl BootInfoFrameAllocator {
+    pub unsafe fn init_temp(memory_map: &'static [MemoryRegion]) -> ([Option<PhysFrame>; 512], &'static [MemoryRegion])
+
+{
+        println!("Entered BootInfoFrameAllocator::init_temp");
+        println!("BootInfoFrameAllocator::init_temp: memory_map.len = {}", memory_map.len());
+//---------------------------------------------------------------------
+//Debug code
+        for (i, region) in memory_map.iter().enumerate() {
+        println!(
+        "Region {}: start={:#x}, end={:#x}, kind={:?}",
+        i, region.start, region.end, region.kind
+    );
+}
+//end of debug code
+//--------------------------------------------------------------------- 
+
+
+        let mut temp_frames: [Option<PhysFrame>; 512] = [None; 512];
+        let mut count = 0;
+
+        for region in memory_map.iter() {
+    for addr in (region.start..region.end).step_by(4096) {
+        if count >= temp_frames.len() {
+            break;
+        }
+
+        let frame = PhysFrame::containing_address(PhysAddr::new(addr));
+        if frame.start_address().as_u64() < 0x10000 {
+            continue;
+        }
+
+    //    println!("Adding frame: {:#x}", addr);
+        temp_frames[count] = Some(frame);
+        count += 1;
+    }
+
+    if count >= temp_frames.len() {
+        break;
+    }
+}
+
+    
+
+(temp_frames, memory_map)
+
+
+        
+
+        
+    }
+}
+
+   impl BootInfoFrameAllocator {
+    /// Full allocator — requires heap to be initialized
+    pub unsafe fn init(memory_map: &'static [MemoryRegion]) -> Self {
+        println!("Entered BootInfoFrameAllocator::init");
+        println!("memory_map.len = {}", memory_map.len());
+
+        let mut frames = Vec::new();
+
+        for region in memory_map.iter() {
+            for addr in (region.start..region.end).step_by(4096) {
+                let frame = PhysFrame::containing_address(PhysAddr::new(addr));
+                if frame.start_address().as_u64() < 0x10000 {
+                    continue;
+                }
+
+                frames.push(frame);
+            }
+        }
+
+        BootInfoFrameAllocator {
+            memory_map,
+            frames,
+            next: 0,
+        }
+    }
+}
+ 
+
+
+
+unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
+   fn allocate_frame(&mut self) -> Option<PhysFrame> {
+    if self.next >= self.frames.len() {
+        return None;
+    }
+    let frame = self.frames.get(self.next).cloned();
+    self.next += 1;
+    frame
+}
+
 }
 
 /// Maps the LAPIC MMIO region into the virtual address space.

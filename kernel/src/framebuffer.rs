@@ -1,8 +1,11 @@
 use bootloader_api::info::{PixelFormat, FrameBuffer};
 use core::fmt;
+use font8x8::{BASIC_FONTS, LATIN_FONTS, BOX_FONTS};
 use font8x8::UnicodeFonts;
 use spin::Mutex;
 use volatile::Volatile;
+
+
 
 pub static WRITER: Mutex<Option<Writer>> = Mutex::new(None);
 
@@ -59,24 +62,30 @@ impl Writer {
         self.info.height
     }
 
-    fn write_char(&mut self, c: char) {
-        match c {
-            '\n' => self.newline(),
-            '\r' => self.carriage_return(),
-            c => {
-                if self.x_pos >= self.width() {
-                    self.newline();
-                }
-                while self.y_pos >= (self.height() - 8) {
-                    self.shift_lines_up();
-                }
-                let rendered = font8x8::BASIC_FONTS
-                    .get(c)
-                    .expect("character not found in basic font");
-                self.write_rendered_char(rendered);
+
+fn write_char(&mut self, c: char) {
+    match c {
+        '\n' => self.newline(),
+        '\r' => self.carriage_return(),
+        c => {
+            if self.x_pos >= self.width() {
+                self.newline();
             }
+            while self.y_pos >= (self.height() - 8) {
+                self.shift_lines_up();
+            }
+
+            let rendered = BASIC_FONTS.get(c)
+                .or_else(|| LATIN_FONTS.get(c))
+                .or_else(|| BOX_FONTS.get(c))
+                .unwrap_or_else(|| BASIC_FONTS.get('?').unwrap());
+
+            self.write_rendered_char(rendered);
         }
     }
+}
+
+
 
     fn write_rendered_char(&mut self, rendered_char: [u8; 8]) {
         for (y, byte) in rendered_char.iter().enumerate() {
