@@ -11,6 +11,7 @@ use crate::{print, println};
 
 extern crate alloc;
 use alloc::vec::Vec;
+use alloc::collections::BTreeSet;
 
 /// Initialize a new OffsetPageTable.
 ///
@@ -58,7 +59,116 @@ pub struct BootInfoFrameAllocator {
     pub memory_map: &'static [MemoryRegion],
     pub frames: Vec<PhysFrame>,
     pub next: usize,
+    pub allocated: FrameBitmap,
 }
+
+pub struct FrameBitmap {
+    bits: *mut [u8; 32768],
+    base_address: u64,     // e.g., 0x100000
+    frame_count: usize,    // e.g., 262_144
+}
+
+static mut BITMAP: [u8; 32768] = [0; 32768];
+
+impl FrameBitmap {
+    pub fn new() -> Self {
+        unsafe {
+            FrameBitmap {
+                bits: &raw mut BITMAP,
+                base_address: 0x100000, // Start at 1 MiB
+                frame_count: 262_144,   // 1 GiB of 4 KiB frames
+            }
+        }
+    }
+}
+
+impl FrameBitmap {
+    fn as_slice(&self) -> &[u8; 32768] {
+        unsafe { &*self.bits }
+    }
+
+  pub fn contains(&self, frame: PhysFrame) -> bool {
+    let index = frame.start_address().as_u64() / 4096;
+    let byte = (index / 8) as usize;
+    let bit = (index % 8) as u8;
+
+    if byte >= self.as_slice().len() {
+        println!("Frame {:?} out of bounds for bitmap", frame);
+        return false;
+    }
+
+    self.as_slice()[byte] & (1 << bit) != 0
+}
+
+
+}
+
+impl FrameBitmap {
+    pub fn all_frames(&self) -> impl Iterator<Item = PhysFrame> {
+        (0..self.frame_count).map(move |i| {
+            let addr = self.base_address + (i as u64) * 4096;
+            PhysFrame::containing_address(PhysAddr::new(addr))
+        })
+    }
+}
+
+
+
+impl FrameBitmap {
+   
+  pub fn is_used(&self, frame: PhysFrame) -> bool {
+    let index = frame.start_address().as_u64() / 4096;
+    let byte = (index / 8) as usize;
+    let bit = (index % 8) as u8;
+    self.as_slice()[byte] & (1 << bit) != 0
+}
+
+}
+
+
+
+impl FrameBitmap {
+   
+    pub fn iter_used_frames(&self) -> impl Iterator<Item = PhysFrame> + '_ {
+        self.as_slice().iter().enumerate().flat_map(|(byte_index, byte)| {
+            (0..8).filter_map(move |bit| {
+                if byte & (1 << bit) != 0 {
+                    let frame_number = byte_index * 8 + bit as usize;
+                    Some(PhysFrame::containing_address(PhysAddr::new((frame_number * 4096) as u64)))
+                } else {
+                    None
+                }
+            })
+        })
+    }
+}
+
+
+impl FrameBitmap {
+
+fn as_mut_slice(&mut self) -> &mut [u8; 32768] {
+    unsafe { &mut *self.bits }
+}
+
+
+  pub fn mark_used(&mut self, frame: PhysFrame) -> bool {
+    let index = frame.start_address().as_u64() / 4096;
+    let byte = (index / 8) as usize;
+    let bit = (index % 8) as u8;
+
+    if byte >= self.as_mut_slice().len() {
+        println!("Frame {:?} out of bounds for bitmap", frame);
+        return false;
+    }
+
+    self.as_mut_slice()[byte] |= 1 << bit;
+    true
+}
+
+
+}
+
+
 
 impl PreHeapAllocator {
     pub fn into_vec(self) -> Vec<PhysFrame> {
@@ -83,13 +193,24 @@ unsafe impl FrameAllocator<Size4KiB> for PreHeapAllocator {
 
 impl BootInfoFrameAllocator {
     pub fn new(memory_map: &'static [MemoryRegion], frames: Vec<PhysFrame>) -> Self {
+println!("Entered BootInfoFrameAllocator::new");
+
         BootInfoFrameAllocator {
             memory_map,
             frames,
             next: 0,
+            allocated: FrameBitmap::new(),
+
         }
     }
 }
+
+impl BootInfoFrameAllocator {
+   pub fn allocated_frames(&self) -> impl Iterator<Item = PhysFrame> {
+    self.allocated.iter_used_frames()
+   }
+}
+
 
 impl BootInfoFrameAllocator {
     pub fn into_vec(self) -> Vec<PhysFrame> {
@@ -97,6 +218,12 @@ impl BootInfoFrameAllocator {
     }
 }
 
+impl BootInfoFrameAllocator {
+    pub fn is_allocated(&self, frame: PhysFrame) -> bool {
+    self.allocated.contains(frame)
+}
+
+}
 
 
 impl BootInfoFrameAllocator {
@@ -107,12 +234,12 @@ impl BootInfoFrameAllocator {
         println!("BootInfoFrameAllocator::init_temp: memory_map.len = {}", memory_map.len());
 //---------------------------------------------------------------------
 //Debug code
-        for (i, region) in memory_map.iter().enumerate() {
-        println!(
-        "Region {}: start={:#x}, end={:#x}, kind={:?}",
-        i, region.start, region.end, region.kind
-    );
-}
+     //   for (i, region) in memory_map.iter().enumerate() {
+      //  println!(
+     //   "Region {}: start={:#x}, end={:#x}, kind={:?}",
+     //   i, region.start, region.end, region.kind
+  //  );
+//}
 //end of debug code
 //--------------------------------------------------------------------- 
 
@@ -152,6 +279,40 @@ impl BootInfoFrameAllocator {
     }
 }
 
+impl BootInfoFrameAllocator {
+    pub fn mark_used_frames(&mut self) {
+        println!("Starting mark_used_frames()");
+
+        for region in self.memory_map.iter() {
+            if region.start >= region.end {
+                println!("Skipping invalid region: start={:#x}, end={:#x}", region.start, region.end);
+                continue;
+            }
+
+            match region.kind {
+                MemoryRegionKind::Usable => {
+                    // Optional: log skipped usable regions
+                    // println!("Skipping usable region: {:#x} - {:#x}", region.start, region.end);
+                    continue;
+                }
+                _ => {
+                    println!(
+                        "Marking used region: start={:#x}, end={:#x}, kind={:?}",
+                        region.start, region.end, region.kind
+                    );
+
+                    for addr in (region.start..region.end).step_by(4096) {
+                        let frame = PhysFrame::containing_address(PhysAddr::new(addr));
+                        self.allocated.mark_used(frame);
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
    impl BootInfoFrameAllocator {
     /// Full allocator — requires heap to be initialized
     pub unsafe fn init(memory_map: &'static [MemoryRegion]) -> Self {
@@ -175,6 +336,8 @@ impl BootInfoFrameAllocator {
             memory_map,
             frames,
             next: 0,
+            allocated: FrameBitmap::new(),
+
         }
     }
 }
@@ -187,10 +350,13 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
     if self.next >= self.frames.len() {
         return None;
     }
-    let frame = self.frames.get(self.next).cloned();
+    let frame = self.frames[self.next];
     self.next += 1;
-    frame
+    self.allocated.mark_used(frame); // ✅ track it
+
+    Some(frame)
 }
+
 
 }
 
@@ -224,6 +390,16 @@ pub fn map_page(
             .flush();
     }
 }
+
+pub fn find_unused_frame(allocator: &FrameBitmap) -> Option<PhysFrame> {
+    for frame in allocator.all_frames() {
+        if !allocator.is_used(frame) {
+            return Some(frame);
+        }
+    }
+    None
+}
+
 
 
 
