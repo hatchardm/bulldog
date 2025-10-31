@@ -19,6 +19,9 @@ use kernel::{
 };
 
 use kernel::init;
+use kernel::time;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use kernel::interrupts::LAPIC_HITS_RAW;
 
 
 // 🛠 Bootloader configuration
@@ -34,7 +37,7 @@ const CONFIG: BootloaderConfig = {
 entry_point!(kernel_main, config = &CONFIG);
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
-    // ✅ Framebuffer first—enables println!()
+    // Framebuffer first—enables println!()
     let framebuffer = boot_info.framebuffer.as_mut().unwrap();
 
 // Extract info before init to avoid borrow conflict
@@ -51,19 +54,35 @@ println!("Framebuffer physical address: {:#x}", fb_ptr);
 println!("Framebuffer range: {:#x} - {:#x}", fb_ptr, fb_ptr + fb_info.byte_len);
 
 println!("Extracting memory info early to avoid borrow conflicts");
-    // ✅ Extract memory info early to avoid borrow conflicts
+    // Extract memory info early to avoid borrow conflicts
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset.into_option().unwrap());
-println!("Extracted memory info early to avoid borrow conflicts");  
-println!(
-    "Memory regions ptr: {:p}",
-    &boot_info.memory_regions as *const _
-);
+println!("Extracted memory info early to avoid borrow conflicts");
 
-println!(" Calling init");
-    // ✅ Initialize kernel (GDT, IDT, memory mapping, heap, APIC, etc.)
-init(&*boot_info.memory_regions, phys_mem_offset)
-    .expect("Kernel init failed");
-println!("Exiting init");
+//Debug code
+//println!(
+    //"Memory regions ptr: {:p}",
+   // &boot_info.memory_regions as *const _
+//);
+
+println!("Calling init");
+let result = init(&*boot_info.memory_regions, phys_mem_offset);
+println!("Init result: {:?}", result);
+
+println!("Exited init");
+
+for _ in 0..1_000_000 {
+    core::hint::spin_loop();
+}
+
+println!("LAPIC_HITS_RAW addr: {:p}", unsafe { &raw const LAPIC_HITS_RAW });
+
+
+
+
+
+
+
+ 
 
 
     // ✅ Task executor

@@ -12,27 +12,15 @@ use crate::{print, println};
 extern crate alloc;
 use alloc::vec::Vec;
 use alloc::collections::BTreeSet;
+use crate::apic::LAPIC_VIRT_BASE;
 
-/// Initialize a new OffsetPageTable.
-///
-/// # Safety
-/// Caller must ensure the complete physical memory is mapped to virtual memory
-/// at `physical_memory_offset`, and this is only called once.
-pub unsafe fn init(physical_memory_offset: VirtAddr) -> OffsetPageTable<'static> {
-    let level_4_table = active_level_4_table(physical_memory_offset);
-    OffsetPageTable::new(level_4_table, physical_memory_offset)
-}
-
-/// Returns a mutable reference to the active level 4 table.
-///
-/// # Safety
 /// Same safety requirements as `init`.
 unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut PageTable {
     let (level_4_table_frame, _) = Cr3::read();
     let phys = level_4_table_frame.start_address();
     let virt = physical_memory_offset + phys.as_u64();
     let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
-    &mut *page_table_ptr
+   &mut *page_table_ptr
 }
 
 /// Initializes an OffsetPageTable using the given physical memory offset.
@@ -285,7 +273,7 @@ impl BootInfoFrameAllocator {
 
         for region in self.memory_map.iter() {
             if region.start >= region.end {
-                println!("Skipping invalid region: start={:#x}, end={:#x}", region.start, region.end);
+            //    println!("Skipping invalid region: start={:#x}, end={:#x}", region.start, region.end);
                 continue;
             }
 
@@ -296,10 +284,11 @@ impl BootInfoFrameAllocator {
                     continue;
                 }
                 _ => {
-                    println!(
-                        "Marking used region: start={:#x}, end={:#x}, kind={:?}",
-                        region.start, region.end, region.kind
-                    );
+                    //Debug code
+                  //  println!(
+                  //      "Marking used region: start={:#x}, end={:#x}, kind={:?}",
+                    //    region.start, region.end, region.kind
+                   // );
 
                     for addr in (region.start..region.end).step_by(4096) {
                         let frame = PhysFrame::containing_address(PhysAddr::new(addr));
@@ -360,17 +349,37 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
 
 }
 
+
+
+
+
 /// Maps the LAPIC MMIO region into the virtual address space.
 pub fn map_lapic_mmio(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
 ) {
-    let lapic_phys = PhysAddr::new(0xfee00000);
-    let lapic_virt = VirtAddr::new(0xfee00000);
-    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+    println!("Mapping LAPIC MMIO region...");
 
-    map_page(mapper, lapic_virt, lapic_phys, flags, frame_allocator);
+    let virt = VirtAddr::new(crate::apic::LAPIC_VIRT_BASE); // <- match apic.rs
+    let phys = PhysAddr::new(0xFEE00000);                  // LAPIC physical base
+    let page = Page::containing_address(virt);
+    let frame = PhysFrame::containing_address(phys);
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
+
+    unsafe {
+        mapper.map_to(page, frame, flags, frame_allocator)
+            .expect("LAPIC map failed")
+            .flush();
+    }
+
+    println!("Mapped LAPIC page at {:#x}", virt.as_u64());
+    println!("LAPIC MMIO fully mapped");
 }
+
+
+
+
+
 
 /// Maps a single page to a physical frame with the given flags.
 pub fn map_page(

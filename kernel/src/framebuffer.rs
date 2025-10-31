@@ -57,7 +57,7 @@ impl Writer {
     fn width(&self) -> usize {
         self.info.width
     }
-
+ 
     fn height(&self) -> usize {
         self.info.height
     }
@@ -186,3 +186,6 @@ fn test_println_output() {
         }
     });
 }
+
+
+

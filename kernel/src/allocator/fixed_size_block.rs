@@ -31,7 +31,7 @@ const BLOCK_SIZES: &[usize] = &[8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 fn list_index(layout: &Layout) -> Option<usize> {
     let required_block_size = layout.size().max(layout.align());
     let index = BLOCK_SIZES.iter().position(|&s| s >= required_block_size);
-    println!("list_index: layout={:?} → index={:?}", layout, index);
+   // println!("list_index: layout={:?} → index={:?}", layout, index);
     index
 }
 
@@ -77,7 +77,7 @@ impl FixedSizeBlockAllocator {
 
     // Add regions for fixed-size blocks
     for &block_size in BLOCK_SIZES {
-        println!("Adding region for block size: {}", block_size);
+     //   println!("Adding region for block size: {}", block_size);
         self.add_region(aligned_start, adjusted_size, block_size);
     }
 }
@@ -115,13 +115,14 @@ pub fn fallback_alloc(&self, layout: Layout) -> *mut u8 {
     let end = heap_start + heap_size;
 
     // ✅ Insert the log here
-    println!(
-        "add_region: block_size={}, aligned_start={:#x}, end={:#x}, usable={}",
-        block_size,
-        aligned_start,
-        end,
-        end.saturating_sub(aligned_start)
-    );
+    //Debugging the parameters
+    //println!(
+   //     "add_region: block_size={}, aligned_start={:#x}, end={:#x}, usable={}",
+   //     block_size,
+   //     aligned_start,
+    //    end,
+     //   end.saturating_sub(aligned_start)
+   // );
 
     let mut current = aligned_start;
     let mut count = 0;
@@ -138,7 +139,7 @@ pub fn fallback_alloc(&self, layout: Layout) -> *mut u8 {
         current += block_size;
     }
 
-    println!("Added {} blocks for size {}", count, block_size);
+   // println!("Added {} blocks for size {}", count, block_size);
 }
 
 
@@ -158,7 +159,7 @@ pub fn fallback_alloc(&self, layout: Layout) -> *mut u8 {
 
 unsafe impl GlobalAlloc for Locked<FixedSizeBlockAllocator> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-         println!("GlobalAlloc::alloc called");
+      //   println!("GlobalAlloc::alloc called");
         let mut allocator = self.lock();
         match list_index(&layout) {
             Some(index) => match allocator.list_heads[index].take() {

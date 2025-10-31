@@ -44,19 +44,30 @@ pub fn init_heap(
         unsafe { mapper.map_to(page, frame, flags, frame_allocator)?.flush() };
     }
 
-    let heap_start = HEAP_START;
+let heap_start = VirtAddr::new(HEAP_START as u64);
 
+const MAX_BLOCK_ALIGN: u64 = 1024;
+let aligned_start = VirtAddr::new(
+    align_up(heap_start.as_u64().try_into().unwrap(), MAX_BLOCK_ALIGN as usize) as u64
+);
 
-const MAX_BLOCK_ALIGN: usize = 1024;
-let aligned_start = align_up(heap_start, MAX_BLOCK_ALIGN);
-let adjusted_size = HEAP_SIZE - (aligned_start - heap_start);
-let aligned_start_ptr = aligned_start as *mut u8;
+let adjusted_size = (HEAP_SIZE as u64) - (aligned_start.as_u64() - heap_start.as_u64());
+let aligned_start_ptr: *mut u8 = aligned_start.as_mut_ptr();
+
+//println!(
+ //   "Allocator init: aligned_start = {:#x}, adjusted_size = {}",
+   // aligned_start.as_u64(),
+   // adjusted_size
+//);
 
 
 unsafe {
-    ALLOCATOR.lock().init(aligned_start, adjusted_size);
-
+    ALLOCATOR
+        .lock()
+        .init(aligned_start.as_u64() as usize, adjusted_size as usize);
 }
+
+
 
 println!(
     "Heap initialized: start = {:#x}, size = {} bytes",

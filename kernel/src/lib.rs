@@ -21,7 +21,7 @@ use x86_64::structures::paging::{FrameAllocator, PhysFrame};
 use crate::memory::init_offset_page_table;
 use crate::memory::map_lapic_mmio;
 use x86_64::structures::paging::PageTableFlags;
-use crate::apic::apic::init as setup_apic;
+use crate::apic::setup_apic;
 use crate::memory::BootInfoFrameAllocator;
 use bootloader_api::BootInfo;
 use x86_64::structures::paging::mapper::Mapper;
@@ -31,6 +31,7 @@ use core::ptr;
 use crate::allocator::ALLOCATOR;
 use crate::memory::find_unused_frame;
 use x86_64::structures::paging::Translate;
+use crate::apic::{lapic_write, lapic_read, LapicRegister};
 
 
 
@@ -42,6 +43,7 @@ pub mod memory;
 pub mod task;
 pub mod stack;
 pub mod apic;
+pub mod time;
 
 
 
@@ -52,6 +54,8 @@ pub fn init(
     use crate::{gdt, interrupts, memory, stack};
     use x86_64::structures::paging::{Page, PageTableFlags};
 
+    disable_pic();
+
     println!("Creating mapper");
     let mut mapper = unsafe { memory::init_offset_page_table(phys_mem_offset) };
 
@@ -59,6 +63,17 @@ pub fn init(
     let memory_regions: &'static [MemoryRegion] = unsafe {
         core::mem::transmute::<&[MemoryRegion], &'static [MemoryRegion]>(memory_regions)
     };
+
+   // for region in memory_regions.iter() {
+   // println!(
+    //    "Region: start={:#x}, end={:#x}, kind={:?}",
+     //   region.start,
+      //  region.end,
+      //  region.kind,
+  //  );
+//}
+
+
 
     println!("Creating pre-heap frame allocator");
     let (temp_frames, memory_map) = unsafe {
@@ -80,9 +95,6 @@ println!("Heap initialized");
 
 
 println!("Creating frame allocator");
-println!("Creating frame allocator");
-println!("Creating frame allocator");
-println!("Creating frame allocator");
 
 let frames = temp_allocator.into_vec();
 
@@ -96,11 +108,11 @@ println!("BootInfoFrameAllocator::new returned");
   // println!("Logging memory regions");
    // for region in memory_regions.iter() {
    //     let virt = VirtAddr::new(region.start + phys_mem_offset.as_u64());
-    //    println!(
+   //     println!(
     //         "Region: start={:#x}, virt={:#x}, type={:?}",
     //        region.start, virt, region.kind
      //   );
-   // }
+//}
 
     gdt::init();
     interrupts::init_idt();
@@ -136,40 +148,50 @@ println!("Starting LAPIC stack mapping loop");
 
 // Pre-mark LAPIC stack frames to avoid allocator reuse
 for page in lapic_stack_range.clone() {
-    let phys = page.start_address().as_u64(); // Already physical
-    let frame = PhysFrame::containing_address(PhysAddr::new(phys));
-    frame_allocator.allocated.mark_used(frame);
+    if let Some(phys) = mapper.translate_addr(page.start_address()) {
+        let frame = PhysFrame::containing_address(phys);
+        frame_allocator.allocated.mark_used(frame);
+    } else {
+        println!("LAPIC stack page not mapped: {:?}", page.start_address());
+    }
 }
+
 
 
 println!("LAPIC stack range: virt={:#x} - {:#x}", lapic_stack_start, lapic_stack_end);
-for page in lapic_stack_range.clone() {
-    println!("LAPIC stack page: virt={:#x}", page.start_address());
-}
-
-// Now map each LAPIC stack page using the pre-marked frames
 for page in lapic_stack_range {
     let phys = page.start_address().as_u64();
     let frame = PhysFrame::containing_address(PhysAddr::new(phys));
-
-
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 
-    if mapper.translate_addr(page.start_address()).is_some() {
-    println!("Page already mapped: {:?}", page.start_address());
-    continue; // or return Err if you want to fail fast
-}
+    match mapper.translate_addr(page.start_address()) {
+        Some(_) => {
+          //  println!("Page already mapped: {:?}", page.start_address());
 
-println!(
-    "Mapping LAPIC stack page: virt={:#x}, phys={:#x}",
-    page.start_address().as_u64(),
-    frame.start_address().as_u64()
-);
+            // Unmap and remap to ensure correct flags
+            unsafe {
+                mapper.unmap(page)
+    .map_err(|_| MapToError::FrameAllocationFailed)?
+    .1
+    .flush();
 
-    unsafe {
-        mapper.map_to(page, frame, flags, &mut frame_allocator)?.flush();
+                mapper.map_to(page, frame, flags, &mut frame_allocator)?.flush();
+            }
+        }
+        None => {
+          //  println!(
+           //     "Mapping LAPIC stack page: virt={:#x}, phys={:#x}",
+            //    page.start_address().as_u64(),
+           //     frame.start_address().as_u64()
+          //  );
+
+            unsafe {
+                mapper.map_to(page, frame, flags, &mut frame_allocator)?.flush();
+            }
+        }
     }
 }
+
 
 
 
@@ -207,9 +229,22 @@ println!(
   //  }
 //}
 
-    crate::setup_apic();
-    x86_64::instructions::interrupts::enable();
-    Ok(())
+  
+
+
+   setup_apic(); // LAPIC MMIO, timer config, etc.
+
+   let count = lapic_read(LapicRegister::CURRENT_COUNT);
+println!("LAPIC CURRENT COUNT: {}", count);
+
+
+println!("Exited setup_apic()");
+println!("Enabling interrupts");
+x86_64::instructions::interrupts::enable();
+println!("Exiting init");
+
+Ok(())
+
 
 }
 
@@ -222,8 +257,16 @@ pub fn hlt_loop() -> ! {
 }
 
 
+pub fn disable_pic() {
+    use x86_64::instructions::port::Port;
 
-
+    unsafe {
+        let mut pic1 = Port::new(0x21);
+        let mut pic2 = Port::new(0xA1);
+        pic1.write(0xFFu8); // Mask all IRQs on PIC1
+        pic2.write(0xFFu8); // Mask all IRQs on PIC2
+    }
+}
 
 
 
