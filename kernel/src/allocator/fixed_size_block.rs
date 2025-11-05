@@ -4,7 +4,7 @@ use core::{
     mem,
     ptr::{self, NonNull},
 };
-use crate::{print, println};
+//use crate::{print, println};
 use linked_list_allocator::LockedHeap;
 
 
@@ -64,7 +64,7 @@ impl FixedSizeBlockAllocator {
     /// heap bounds are valid and that the heap is unused. This method must be
     /// called only once.
    pub unsafe fn init(&mut self, heap_start: usize, heap_size: usize) {
-    println!("FixedSizeBlockAllocator::init called with heap_start={:#x}, size={}", heap_start, heap_size);
+   // println!("FixedSizeBlockAllocator::init called with heap_start={:#x}, size={}", heap_start, heap_size);  //reinstate when framebuffer is ready    
     // Align heap start to satisfy stricter layout requirements
     let aligned_start = align_up(heap_start, 128); // or 64 if you prefer
     let adjusted_size = heap_size - (aligned_start - heap_start);
@@ -90,10 +90,10 @@ pub fn fallback_alloc(&self, layout: Layout) -> *mut u8 {
 
 
     if ptr.is_null() {
-        println!("Fallback alloc failed: layout={:?}", layout);
+ //       println!("Fallback alloc failed: layout={:?}", layout);   //reinstate when framebuffer is ready
         ptr::null_mut()
     } else {
-        println!("Fallback alloc success: layout={:?}, ptr={:p}", layout, ptr);
+       // println!("Fallback alloc success: layout={:?}, ptr={:p}", layout, ptr); //reinstate when framebuffer is ready
         ptr
     }
 }

@@ -1,9 +1,13 @@
+ENTRY(kernel_main)
+
 SECTIONS {
     . = ALIGN(4K);
 
-    .text : {
-        *(.text*)
-    }
+   .text : {
+    KEEP(*(.text.entry_point))  /* ← preserves the kernel entrypoint */
+    *(.text*)
+}
+
 
     .rodata : {
         *(.rodata*)

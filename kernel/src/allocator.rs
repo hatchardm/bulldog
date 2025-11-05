@@ -10,7 +10,7 @@ use x86_64::{
 use linked_list_allocator::LockedHeap;
 use crate::allocator::fixed_size_block::FixedSizeBlockAllocator;
 use crate::allocator::fixed_size_block::align_up;
-use crate::{print, println};
+//use crate::{print, println};
 
 #[global_allocator]
 pub static ALLOCATOR: Locked<FixedSizeBlockAllocator> = Locked::new(FixedSizeBlockAllocator::new());
@@ -27,7 +27,7 @@ pub fn init_heap(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
 ) -> Result<(), MapToError<Size4KiB>> {
-    println!("Entered init_heap");
+  //  println!("Entered init_heap");
     let page_range = {
         let heap_start = VirtAddr::new(HEAP_START as u64);
         let heap_end = heap_start + HEAP_SIZE - 1u64;
@@ -69,10 +69,10 @@ unsafe {
 
 
 
-println!(
-    "Heap initialized: start = {:#x}, size = {} bytes",
-    aligned_start, adjusted_size
-);
+//println!(
+//    "Heap initialized: start = {:#x}, size = {} bytes",
+    //aligned_start, adjusted_size
+//);
 
 
     Ok(())

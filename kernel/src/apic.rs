@@ -1,7 +1,7 @@
 
     use core::ptr::write_volatile;
     use crate::interrupts::LAPIC_TIMER_VECTOR;
-    use crate::{print, println};
+   // use crate::{print, println};
     use core::ptr::read_volatile;
     use core::arch::asm;
 
@@ -45,7 +45,7 @@ pub fn lapic_read(reg: LapicRegister) -> u32 {
   pub fn lapic_write(reg: LapicRegister, value: u32) {
     unsafe {
         let reg_ptr = (LAPIC_VIRT_BASE + reg as u64) as *mut u32;
-        println!("lapic_write → VIRT {:#x}", reg_ptr as usize);
+    //    println!("lapic_write → VIRT {:#x}", reg_ptr as usize);
         core::ptr::write_volatile(reg_ptr, value);
     }
 }
@@ -53,31 +53,31 @@ pub fn lapic_read(reg: LapicRegister) -> u32 {
 
 
 pub fn setup_apic() {
-    println!("Entered setup_apic()");
+   // println!("Entered setup_apic()");
 
     // Read LAPIC base MSR
     let apic_base = read_msr(0x1B);
     let base_phys = apic_base & 0xFFFFF000;
     let enabled = (apic_base >> 11) & 1;
-    println!("APIC base MSR: {:#x}", apic_base);
-    println!("APIC physical base: {:#x}", base_phys);
-    println!("LAPIC enabled: {}", enabled);
+   // println!("APIC base MSR: {:#x}", apic_base);
+    //println!("APIC physical base: {:#x}", base_phys);
+   // println!("LAPIC enabled: {}", enabled);
     if enabled == 0 {
         panic!("LAPIC is not enabled!");
     }
 
     // LAPIC version
     let version = lapic_read(LapicRegister::VERSION);
-    println!("LAPIC VERSION: {:#x}", version);
+   // println!("LAPIC VERSION: {:#x}", version);
 
     // LAPIC ID (once)
     let id = lapic_read(LapicRegister::ID);
     let cpuid_id = cpuid_apic_id();
-    println!("LAPIC ID: {:#x}, CPUID APIC ID: {:#x}", id, cpuid_id);
+  //  println!("LAPIC ID: {:#x}, CPUID APIC ID: {:#x}", id, cpuid_id);
 
     // Spurious Interrupt Vector Register (SVR)
     lapic_write(LapicRegister::SVR, 0x100 | LAPIC_TIMER_VECTOR as u32);
-    println!("SVR written");
+   // println!("SVR written");
 
     // Timer setup
     lapic_write(LapicRegister::DIVIDE_CONFIG, 0b0011); // Divide by 16
@@ -90,15 +90,15 @@ pub fn setup_apic() {
     
 
     let lvt = lapic_read(LapicRegister::LVT_TIMER);
-    println!("LVT_TIMER: {:#x}", lvt);
+   // println!("LVT_TIMER: {:#x}", lvt);
 
     lapic_write(LapicRegister::INITIAL_COUNT, 1_000_000); // Adjust as needed
 
     let current = lapic_read(LapicRegister::CURRENT_COUNT);
-    println!("LAPIC CURRENT COUNT: {}", current);
+  //  println!("LAPIC CURRENT COUNT: {}", current);
 
 
-    println!("LAPIC timer configured");
+   // println!("LAPIC timer configured");
 }
 
 

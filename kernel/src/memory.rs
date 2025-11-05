@@ -7,7 +7,7 @@ use x86_64::{
     },
     registers::control::Cr3,
 };
-use crate::{print, println};
+//use crate::{print, println};
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -81,7 +81,7 @@ impl FrameBitmap {
     let bit = (index % 8) as u8;
 
     if byte >= self.as_slice().len() {
-        println!("Frame {:?} out of bounds for bitmap", frame);
+      //  println!("Frame {:?} out of bounds for bitmap", frame);
         return false;
     }
 
@@ -145,7 +145,7 @@ fn as_mut_slice(&mut self) -> &mut [u8; 32768] {
     let bit = (index % 8) as u8;
 
     if byte >= self.as_mut_slice().len() {
-        println!("Frame {:?} out of bounds for bitmap", frame);
+      // println!("Frame {:?} out of bounds for bitmap", frame);
         return false;
     }
 
@@ -181,7 +181,7 @@ unsafe impl FrameAllocator<Size4KiB> for PreHeapAllocator {
 
 impl BootInfoFrameAllocator {
     pub fn new(memory_map: &'static [MemoryRegion], frames: Vec<PhysFrame>) -> Self {
-println!("Entered BootInfoFrameAllocator::new");
+//println!("Entered BootInfoFrameAllocator::new");
 
         BootInfoFrameAllocator {
             memory_map,
@@ -218,8 +218,8 @@ impl BootInfoFrameAllocator {
     pub unsafe fn init_temp(memory_map: &'static [MemoryRegion]) -> ([Option<PhysFrame>; 512], &'static [MemoryRegion])
 
 {
-        println!("Entered BootInfoFrameAllocator::init_temp");
-        println!("BootInfoFrameAllocator::init_temp: memory_map.len = {}", memory_map.len());
+      //  println!("Entered BootInfoFrameAllocator::init_temp");
+      //  println!("BootInfoFrameAllocator::init_temp: memory_map.len = {}", memory_map.len());
 //---------------------------------------------------------------------
 //Debug code
      //   for (i, region) in memory_map.iter().enumerate() {
@@ -269,7 +269,7 @@ impl BootInfoFrameAllocator {
 
 impl BootInfoFrameAllocator {
     pub fn mark_used_frames(&mut self) {
-        println!("Starting mark_used_frames()");
+     //   println!("Starting mark_used_frames()");
 
         for region in self.memory_map.iter() {
             if region.start >= region.end {
@@ -305,8 +305,8 @@ impl BootInfoFrameAllocator {
    impl BootInfoFrameAllocator {
     /// Full allocator — requires heap to be initialized
     pub unsafe fn init(memory_map: &'static [MemoryRegion]) -> Self {
-        println!("Entered BootInfoFrameAllocator::init");
-        println!("memory_map.len = {}", memory_map.len());
+       // println!("Entered BootInfoFrameAllocator::init");
+       //println!("memory_map.len = {}", memory_map.len());
 
         let mut frames = Vec::new();
 
@@ -358,7 +358,7 @@ pub fn map_lapic_mmio(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
 ) {
-    println!("Mapping LAPIC MMIO region...");
+   // println!("Mapping LAPIC MMIO region...");
 
     let virt = VirtAddr::new(crate::apic::LAPIC_VIRT_BASE); // <- match apic.rs
     let phys = PhysAddr::new(0xFEE00000);                  // LAPIC physical base
@@ -372,8 +372,8 @@ pub fn map_lapic_mmio(
             .flush();
     }
 
-    println!("Mapped LAPIC page at {:#x}", virt.as_u64());
-    println!("LAPIC MMIO fully mapped");
+    //println!("Mapped LAPIC page at {:#x}", virt.as_u64());
+   // println!("LAPIC MMIO fully mapped");
 }
 
 

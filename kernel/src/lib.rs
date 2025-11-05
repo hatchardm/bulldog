@@ -33,8 +33,9 @@ use crate::memory::find_unused_frame;
 use x86_64::structures::paging::Translate;
 use crate::apic::{lapic_write, lapic_read, LapicRegister};
 
-
-
+#[macro_use]
+pub mod macros;
+pub mod writer;
 pub mod framebuffer;
 pub mod interrupts;
 pub mod gdt;
@@ -44,6 +45,9 @@ pub mod task;
 pub mod stack;
 pub mod apic;
 pub mod time;
+pub mod font;
+pub mod color;
+pub mod logger;
 
 
 
@@ -56,10 +60,10 @@ pub fn init(
 
     disable_pic();
 
-    println!("Creating mapper");
+   // println!("Creating mapper");
     let mut mapper = unsafe { memory::init_offset_page_table(phys_mem_offset) };
 
-    println!("Transmuting memory_regions to 'static");
+ //   println!("Transmuting memory_regions to 'static");
     let memory_regions: &'static [MemoryRegion] = unsafe {
         core::mem::transmute::<&[MemoryRegion], &'static [MemoryRegion]>(memory_regions)
     };
@@ -75,7 +79,7 @@ pub fn init(
 
 
 
-    println!("Creating pre-heap frame allocator");
+//    println!("Creating pre-heap frame allocator");
     let (temp_frames, memory_map) = unsafe {
         memory::BootInfoFrameAllocator::init_temp(memory_regions)
     };
@@ -86,21 +90,21 @@ pub fn init(
     next: 0,
 };
 
-println!("About to call init_heap");
+//println!("About to call init_heap");
 
 allocator::init_heap(&mut mapper, &mut temp_allocator)
     .expect("Heap initialization failed");
 
-println!("Heap initialized");
+//println!("Heap initialized");
 
 
-println!("Creating frame allocator");
+//println!("Creating frame allocator");
 
 let frames = temp_allocator.into_vec();
 
-println!("About to call BootInfoFrameAllocator::new");
+//println!("About to call BootInfoFrameAllocator::new");
 let mut frame_allocator = BootInfoFrameAllocator::new(memory_map, frames);
-println!("BootInfoFrameAllocator::new returned");
+//println!("BootInfoFrameAllocator::new returned");
 
 
 
@@ -117,10 +121,10 @@ println!("BootInfoFrameAllocator::new returned");
     gdt::init();
     interrupts::init_idt();
 
-    println!("Mapping LAPIC MMIO");
+   // println!("Mapping LAPIC MMIO");
     memory::map_lapic_mmio(&mut mapper, &mut frame_allocator);
 
-   println!("Mapping LAPIC IST stack");
+   //println!("Mapping LAPIC IST stack");
 
 let lapic_stack_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(stack::LAPIC_STACK.0) });
 let lapic_stack_end = lapic_stack_start + gdt::STACK_SIZE;
@@ -144,7 +148,7 @@ frame_allocator.mark_used_frames();
  //   println!("Used frame: {:#x}", frame.start_address().as_u64());
 //}
 
-println!("Starting LAPIC stack mapping loop");
+//println!("Starting LAPIC stack mapping loop");
 
 // Pre-mark LAPIC stack frames to avoid allocator reuse
 for page in lapic_stack_range.clone() {
@@ -152,13 +156,13 @@ for page in lapic_stack_range.clone() {
         let frame = PhysFrame::containing_address(phys);
         frame_allocator.allocated.mark_used(frame);
     } else {
-        println!("LAPIC stack page not mapped: {:?}", page.start_address());
+      //  println!("LAPIC stack page not mapped: {:?}", page.start_address());
     }
 }
 
 
 
-println!("LAPIC stack range: virt={:#x} - {:#x}", lapic_stack_start, lapic_stack_end);
+//println!("LAPIC stack range: virt={:#x} - {:#x}", lapic_stack_start, lapic_stack_end);
 for page in lapic_stack_range {
     let phys = page.start_address().as_u64();
     let frame = PhysFrame::containing_address(PhysAddr::new(phys));
@@ -235,13 +239,13 @@ for page in lapic_stack_range {
    setup_apic(); // LAPIC MMIO, timer config, etc.
 
    let count = lapic_read(LapicRegister::CURRENT_COUNT);
-println!("LAPIC CURRENT COUNT: {}", count);
+//println!("LAPIC CURRENT COUNT: {}", count);
 
 
-println!("Exited setup_apic()");
-println!("Enabling interrupts");
+//println!("Exited setup_apic()");
+//println!("Enabling interrupts");
 x86_64::instructions::interrupts::enable();
-println!("Exiting init");
+//println!("Exiting init");
 
 Ok(())
 
@@ -272,6 +276,6 @@ pub fn disable_pic() {
 
 #[alloc_error_handler]
 fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
-    println!("PANIC: allocation error — size: {}, align: {}", layout.size(), layout.align());
+    //println!("PANIC: allocation error — size: {}, align: {}", layout.size(), layout.align());
     panic!("allocation error: {:?}", layout)
 }

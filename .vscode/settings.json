@@ -1,5 +1,13 @@
 {
-    "rust-analyzer.linkedProjects": [
-        "./kernel/Cargo.toml"
-    ]
+  "rust-analyzer.diagnostics.disabled": [
+    "unresolved-macro-call",
+    "unresolved-proc-macro"
+  ],
+  "rust-analyzer.cargo.buildScripts.enable": true,
+  "rust-analyzer.checkOnSave": true,
+  "rust-analyzer.project": "./rust-project.json"
 }
+
+
+
+  

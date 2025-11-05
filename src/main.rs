@@ -1,9 +1,15 @@
-// src/main.rs
+use std::env;
+
 fn main() {
-    let uefi_path = env!("UEFI_PATH");
-    let bios_path = env!("BIOS_PATH");
+    let uefi_path = env::var("UEFI_PATH").expect("UEFI_PATH not set by build.rs");
+    let bios_path = env::var("BIOS_PATH").expect("BIOS_PATH not set by build.rs");
+
+    // 🧪 Sanity check: print paths
+    println!("UEFI path: {}", uefi_path);
+    println!("BIOS path: {}", bios_path);
 
     let uefi = true;
+
 
     let mut cmd = std::process::Command::new("qemu-system-x86_64");
 
@@ -25,4 +31,6 @@ fn main() {
     let mut child = cmd.spawn().unwrap();
     child.wait().unwrap();
 }
+
+
 
