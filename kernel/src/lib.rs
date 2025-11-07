@@ -50,7 +50,6 @@ pub mod color;
 pub mod logger;
 
 
-
 pub fn init(
     memory_regions: &[MemoryRegion],
     phys_mem_offset: VirtAddr,
@@ -76,7 +75,6 @@ pub fn init(
       //  region.kind,
   //  );
 //}
-
 
 
 //    println!("Creating pre-heap frame allocator");

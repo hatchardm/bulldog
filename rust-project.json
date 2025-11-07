@@ -1,9 +1,75 @@
 {
+  "version": 1,
+  "target": "x86_64-unknown-none",
+  "rustc_source": "/home/mark/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust",
   "crates": [
     {
-      "root_module": "kernel/src/main.rs",
+      "name": "x86_64",
+      "root_module": "/home/mark/.cargo/registry/src/github.com-1ecc6299db9ec823/x86_64-0.14.10/src/lib.rs",
       "edition": "2024",
       "deps": [],
+      "source": {
+        "include_dirs": ["/home/mark/.cargo/registry/src/github.com-1ecc6299db9ec823/x86_64-0.14.10/src"],
+        "exclude_dirs": []
+      }
+    },
+    {
+      "name": "spin",
+      "root_module": "/home/mark/.cargo/registry/src/github.com-1ecc6299db9ec823/spin-0.9.8/src/lib.rs",
+      "edition": "2024",
+      "deps": [],
+      "source": {
+        "include_dirs": ["/home/mark/.cargo/registry/src/github.com-1ecc6299db9ec823/spin-0.9.8/src"],
+        "exclude_dirs": []
+      }
+    },
+    {
+      "name": "bootloader",
+      "root_module": "/home/mark/.cargo/registry/src/github.com-1ecc6299db9ec823/bootloader-0.11.12/src/lib.rs",
+      "edition": "2024",
+      "deps": [],
+      "source": {
+        "include_dirs": ["/home/mark/.cargo/registry/src/github.com-1ecc6299db9ec823/bootloader-0.11.12/src"],
+        "exclude_dirs": []
+      }
+    },
+    {
+      "name": "core",
+      "root_module": "/home/mark/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/lib.rs",
+      "edition": "2021",
+      "deps": [],
+      "cfg": [],
+      "env": {},
+      "source": {
+        "include_dirs": ["/home/mark/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src"],
+        "exclude_dirs": []
+      }
+    },
+    {
+      "name": "alloc",
+      "root_module": "/home/mark/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/lib.rs",
+      "edition": "2021",
+      "deps": [
+        { "crate": 3, "name": "core" }
+      ],
+      "cfg": [],
+      "env": {},
+      "source": {
+        "include_dirs": ["/home/mark/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src"],
+        "exclude_dirs": []
+      }
+    },
+    {
+      "name": "kernel",
+      "root_module": "kernel/src/lib.rs",
+      "edition": "2024",
+      "deps": [
+        { "crate": 0, "name": "x86_64" },
+        { "crate": 1, "name": "spin" },
+        { "crate": 2, "name": "bootloader" },
+        { "crate": 3, "name": "core" },
+        { "crate": 4, "name": "alloc" }
+      ],
       "cfg": ["target_os=\"none\"", "target_arch=\"x86_64\""],
       "env": {},
       "is_workspace_member": true,
@@ -11,10 +77,23 @@
         "include_dirs": ["kernel/src"],
         "exclude_dirs": []
       }
+    },
+    {
+      "name": "main",
+      "root_module": "kernel/src/main.rs",
+      "edition": "2024",
+      "deps": [
+        { "crate": 5, "name": "kernel" }
+      ],
+      "cfg": ["target_os=\"none\"", "target_arch=\"x86_64\""],
+      "env": {},
+      "is_workspace_member": false,
+      "source": {
+        "include_dirs": ["kernel/src"],
+        "exclude_dirs": []
+      }
     }
-  ],
-  "sysroot": null,
-  "target": "x86_64-unknown-none",
-  "version": 1
+  ]
 }
+
 

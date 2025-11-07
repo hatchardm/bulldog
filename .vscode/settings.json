@@ -1,13 +1,14 @@
 {
+  "rust-analyzer.linkedProjects": ["./rust-project.json"],
   "rust-analyzer.diagnostics.disabled": [
     "unresolved-macro-call",
     "unresolved-proc-macro"
   ],
   "rust-analyzer.cargo.buildScripts.enable": true,
   "rust-analyzer.checkOnSave": true,
-  "rust-analyzer.project": "./rust-project.json"
+  "rust-analyzer.rustup.toolchain": "nightly"
 }
 
 
 
-  
+
