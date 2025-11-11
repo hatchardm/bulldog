@@ -25,6 +25,7 @@ use kernel::{
     hlt_loop,
     logger::KernelLogger,
 };
+ use kernel::logger::logger_init;
 
 static LOGGER: KernelLogger = KernelLogger;
 
@@ -46,20 +47,44 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     // ✍️ Initialize WRITER
     writer::init(&mut fb);
+
+
+    use core::fmt::Write;
+
+if let Some(ref mut writer) = *WRITER.lock() {
+    writer.set_color((255, 255, 255), (0, 0, 0)); // white on black
+    writer.write_str("🐾 Bulldog Kernel Booting...\n");
+}
+    
+  //  writer::boot_log(&format!(
+   // "Framebuffer format: {:?}, size: {}x{}",
+   // fb.pixel_format, fb.width, fb.height
+//));
     
     // 🪵 Logging
-    log::set_logger(&LOGGER).unwrap();
-    log::set_max_level(LevelFilter::Info);
-    log::info!("Logger initialized");
+    logger_init();
+
+    if let Some(glyph) = get_glyph('A') {
+    log::info!("Glyph 'A' width={} height={}", glyph.width(), glyph.height());
+    log::info!("Raster rows: {}", glyph.raster().len());
+    for (i, row) in glyph.raster().iter().enumerate() {
+        log::info!("Row {} has {} bytes", i, row.len());
+    }
+}
+
+    log::debug!("Debugging enabled");
+    log::info!("System boot complete");
+    log::warn!("Low memory warning");
+    log::error!("Page fault at 0xdeadbeef");
 
     // 🔠 Glyph info
     if let Some(glyph) = get_glyph('A') {
-        log::info!("Glyph size: {}x{}", glyph.width(), glyph.height());
-        log::info!("Raster rows: {}", glyph.raster().len());
+      //  log::info!("Glyph size: {}x{}", glyph.width(), glyph.height());
+      //  log::info!("Raster rows: {}", glyph.raster().len());
     }
 
     // ✅ Test output
-    println!("Hello\nWorld");
+  //  println!("Hello\nWorld");
 
     loop {
         unsafe { core::arch::asm!("hlt"); }
@@ -68,14 +93,16 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    serial_print("KERNEL PANIC: ");
-    if let Some(location) = info.location() {
-        serial_print(" at ");
-        serial_print(location.file());
-        serial_print(":");
-        serial_print(&location.line().to_string());
+    unsafe {
+        serial_print("KERNEL PANIC: ");
+        if let Some(location) = info.location() {
+            serial_print(" at ");
+            serial_print(location.file());
+            serial_print(":");
+            serial_print(&location.line().to_string());
+        }
+        serial_print("\n");
     }
-    serial_print("\n");
     hlt_loop();
 }
 

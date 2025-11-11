@@ -1,130 +1,152 @@
+use core::fmt::{self, Write, Arguments};
+use spin::Mutex;
+use crate::framebuffer::FrameBuffer;
+use core::slice;
+use crate::framebuffer::KernelFramebuffer;
 use crate::font::get_glyph;
 use noto_sans_mono_bitmap::RasterizedChar;
-use spin::Mutex;
-use crate::framebuffer::KernelFramebuffer;
-use core::fmt;
 
-
-
-pub static WRITER: Mutex<Option<TextWriter>> = Mutex::new(None);
+#[derive(Copy, Clone)]
+pub enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
 
 pub struct TextWriter {
-    pub x: usize,
-    pub y: usize,
-    pub framebuffer: &'static mut [u32],
+    pub fg_color: (u8, u8, u8),
+    pub bg_color: (u8, u8, u8),
+    pub cursor_x: usize,
+    pub cursor_y: usize,
     pub width: usize,
     pub height: usize,
-    pub stride: usize,
-    pub fg_color: u8,
-    pub bg_color: u8,
     pub line_height: usize,
+    pub framebuffer: &'static mut [u32],
 }
-
 
 impl TextWriter {
+    pub fn write_str(&mut self, s: &str) {
+        for c in s.chars() {
+            self.write_char(c);
+        }
+    }
+
 pub fn write_char(&mut self, c: char) {
-    match c {
-        '\n' => {
-            self.x = 0;
-            self.y += self.line_height;
+    if c == '\n' {
+        self.cursor_x = 0;
+        self.cursor_y += self.line_height;
+        return;
+    }
 
-            // ✅ Unified clamp
-            if self.y + self.line_height > self.height {
-                self.y = 0; // or scroll, or clear
-            }
-        }
-        _ => {
-            if let Some(glyph) = get_glyph(c) {
-                if self.x + glyph.width() > self.width {
-                    self.x = 0;
-                    self.y += self.line_height;
+    if let Some(glyph) = get_glyph(c) {
+        draw_glyph(
+            &glyph,
+            self.fg_color,
+            self.bg_color,
+            self.framebuffer,
+            self.width,
+            self.height,
+            self.cursor_x,
+            self.cursor_y,
+        );
 
-                    // ✅ Unified clamp
-                    if self.y + self.line_height > self.height {
-                        self.y = 0; // or scroll, or clear
-                    }
-                }
-
-                self.draw_glyph(&glyph);
-                self.x += glyph.width();
-            }
+        self.cursor_x += glyph.width() + 1;
+        if self.cursor_x + glyph.width() >= self.width {
+            self.cursor_x = 0;
+            self.cursor_y += self.line_height;
         }
     }
 }
 
+    pub fn set_color(&mut self, fg: (u8, u8, u8), bg: (u8, u8, u8)) {
+        self.fg_color = fg;
+        self.bg_color = bg;
+    }
 
- fn draw_glyph(&mut self, glyph: &RasterizedChar) {
-    let glyph_w = glyph.width();
-    let glyph_h = glyph.height();
-    let raster = glyph.raster();
-
-
-    for (dy, row) in raster.iter().take(self.line_height).enumerate() {
-    for (dx, &alpha) in row.iter().enumerate() {
-        let px = self.x + dx;
-        let py = self.y + dy;
-        if px < self.width && py < self.height {
-            let offset = py * self.stride + px;
-            self.framebuffer[offset] = self.blend_color(alpha);
+    pub fn set_log_level_color(&mut self, level: LogLevel) {
+        match level {
+            LogLevel::Error => self.set_color((255, 0, 0), (0, 0, 0)),     // red
+            LogLevel::Warn  => self.set_color((255, 255, 0), (0, 0, 0)),   // yellow
+            LogLevel::Info  => self.set_color((0, 255, 0), (0, 0, 0)),     // green
+            LogLevel::Debug => self.set_color((0, 0, 255), (0, 0, 0)),     // blue
+            LogLevel::Trace => self.set_color((128, 128, 128), (0, 0, 0)), // gray
         }
     }
+
+pub fn log(&mut self, level: LogLevel, args: &Arguments) {
+    self.set_log_level_color(level);
+    let _ = self.write_fmt(*args); // ✅ no heap allocation
+    self.write_char('\n');         // ✅ manual newline
+}
 }
 
-}
-
-
-    fn blend(&self, alpha: u8) -> u8 {
-        ((self.fg_color as u16 * alpha as u16 + self.bg_color as u16 * (255 - alpha as u16)) / 255) as u8
+impl Write for TextWriter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.write_str(s);
+        Ok(())
     }
-
-
-
-    fn blend_color(&self, alpha: u8) -> u32 {
-        let fg = self.fg_color as u32;
-        let bg = self.bg_color as u32;
-        let blended = (fg * alpha as u32 + bg * (255 - alpha as u32)) / 255;
-
-        // Replicate grayscale value across BGR channels
-        (blended << 16) | (blended << 8) | blended
-    }
-
 }
 
-
-
+// Global writer instance
+lazy_static::lazy_static! {
+    pub static ref WRITER: Mutex<Option<TextWriter>> = Mutex::new(None);
+}
 
 pub fn init(fb: &mut KernelFramebuffer) {
-    
-let line_height = get_glyph('A')
-    .map(|g| g.raster().len())
-    .unwrap_or(16);
+    let pixel_count = (fb.pitch * fb.height) / 4;
 
-
+    let framebuffer = unsafe {
+        slice::from_raw_parts_mut(fb.ptr as *mut u32, pixel_count)
+    };
 
     let writer = TextWriter {
-        x: 0,
-        y: 0,
-        framebuffer: unsafe {
-            core::slice::from_raw_parts_mut(fb.ptr as *mut u32, fb.pitch * fb.height)
-        },
+        fg_color: (255, 255, 255),
+        bg_color: (0, 0, 0),
+        cursor_x: 0,
+        cursor_y: 0,
         width: fb.width,
         height: fb.height,
-        stride: fb.pitch / 4,
-        fg_color: 255,
-        bg_color: 0,
-        line_height,
+        line_height: get_glyph('A').map(|g| g.height() + 1).unwrap_or(16),
+        framebuffer,
     };
 
     *WRITER.lock() = Some(writer);
 }
 
+fn rgb((r, g, b): (u8, u8, u8)) -> u32 {
+    ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+}
 
+fn draw_glyph(
+    glyph: &RasterizedChar,
+    fg: (u8, u8, u8),
+    bg: (u8, u8, u8),
+    framebuffer: &mut [u32],
+    screen_width: usize,
+    screen_height: usize,
+    cursor_x: usize,
+    cursor_y: usize,
+) {
+    let width = glyph.width();
+    let height = glyph.height();
+    let bitmap = glyph.raster(); // &[&[u8]]
 
-impl fmt::Write for TextWriter {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        for c in s.chars() {
-            self.write_char(c);
+    for row in 0..height {
+        for col in 0..width {
+            let pixel = bitmap[row][col]; // ✅ fix: index row then column
+            let x = cursor_x + col;
+            let y = cursor_y + row;
+
+            if x < screen_width && y < screen_height {
+                let fb_idx = y * screen_width + x;
+                framebuffer[fb_idx] = if pixel > 0 {
+                    rgb(fg)
+                } else {
+                    rgb(bg)
+                };
+            }
         }
-        Ok(())
     }
 }

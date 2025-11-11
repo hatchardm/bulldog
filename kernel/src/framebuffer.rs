@@ -1,4 +1,4 @@
-use bootloader_api::info::{FrameBuffer, PixelFormat};
+pub use bootloader_api::info::{FrameBuffer, PixelFormat};
 
 pub struct KernelFramebuffer {
     pub ptr: *mut u8,
@@ -20,6 +20,15 @@ impl KernelFramebuffer {
             pixel_format: info.pixel_format,
         }
     }
+
+    pub fn pack_color(&self, r: u8, g: u8, b: u8) -> u32 {
+    match self.pixel_format {
+        PixelFormat::Rgb => ((r as u32) << 16) | ((g as u32) << 8) | (b as u32),
+        PixelFormat::Bgr => ((b as u32) << 16) | ((g as u32) << 8) | (r as u32),
+        _ => 0, // or panic!("Unsupported pixel format")
+    }
+}
+
 
     /// Fast screen clear using packed u32 color
     pub fn clear_fast(&mut self, color: u32) {
@@ -56,6 +65,7 @@ impl KernelFramebuffer {
         }
     }
 }
+
 
 
 
