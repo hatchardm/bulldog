@@ -1,10 +1,9 @@
 use core::fmt::{self, Write, Arguments};
 use spin::Mutex;
-use crate::framebuffer::FrameBuffer;
-use core::slice;
 use crate::framebuffer::KernelFramebuffer;
 use crate::font::get_glyph;
 use noto_sans_mono_bitmap::RasterizedChar;
+use core::slice;
 
 #[derive(Copy, Clone)]
 pub enum LogLevel {
@@ -24,6 +23,7 @@ pub struct TextWriter {
     pub height: usize,
     pub line_height: usize,
     pub framebuffer: &'static mut [u32],
+    pub enable_scroll: bool,
 }
 
 impl TextWriter {
@@ -33,32 +33,63 @@ impl TextWriter {
         }
     }
 
-pub fn write_char(&mut self, c: char) {
-    if c == '\n' {
-        self.cursor_x = 0;
-        self.cursor_y += self.line_height;
-        return;
-    }
-
-    if let Some(glyph) = get_glyph(c) {
-        draw_glyph(
-            &glyph,
-            self.fg_color,
-            self.bg_color,
-            self.framebuffer,
-            self.width,
-            self.height,
-            self.cursor_x,
-            self.cursor_y,
-        );
-
-        self.cursor_x += glyph.width() + 1;
-        if self.cursor_x + glyph.width() >= self.width {
+    pub fn write_char(&mut self, c: char) {
+        if c == '\n' {
             self.cursor_x = 0;
             self.cursor_y += self.line_height;
+
+            // Scroll if needed
+            if self.cursor_y + self.line_height >= self.height {
+                if self.enable_scroll {
+                    scroll_up(
+                        self.framebuffer,
+                        self.width,
+                        self.height,
+                        self.line_height,
+                        self.bg_color,
+                    );
+                    self.cursor_y = self.height - self.line_height;
+                } else {
+                    self.cursor_y = self.height - self.line_height;
+                }
+            }
+            return;
+        }
+
+        if let Some(glyph) = get_glyph(c) {
+            draw_glyph(
+                &glyph,
+                self.fg_color,
+                self.bg_color,
+                self.framebuffer,
+                self.width,
+                self.height,
+                self.cursor_x,
+                self.cursor_y,
+            );
+
+            self.cursor_x += glyph.width() + 1;
+            if self.cursor_x + glyph.width() >= self.width {
+                self.cursor_x = 0;
+                self.cursor_y += self.line_height;
+
+                if self.cursor_y + self.line_height >= self.height {
+                    if self.enable_scroll {
+                        scroll_up(
+                            self.framebuffer,
+                            self.width,
+                            self.height,
+                            self.line_height,
+                            self.bg_color,
+                        );
+                        self.cursor_y = self.height - self.line_height;
+                    } else {
+                        self.cursor_y = self.height - self.line_height;
+                    }
+                }
+            }
         }
     }
-}
 
     pub fn set_color(&mut self, fg: (u8, u8, u8), bg: (u8, u8, u8)) {
         self.fg_color = fg;
@@ -75,11 +106,12 @@ pub fn write_char(&mut self, c: char) {
         }
     }
 
-pub fn log(&mut self, level: LogLevel, args: &Arguments) {
-    self.set_log_level_color(level);
-    let _ = self.write_fmt(*args); // ✅ no heap allocation
-    self.write_char('\n');         // ✅ manual newline
-}
+ pub fn log(&mut self, level: LogLevel, args: Arguments) {
+        self.set_log_level_color(level);
+        let _ = self.write_fmt(args);
+        self.write_char('\n');
+    }
+
 }
 
 impl Write for TextWriter {
@@ -110,6 +142,7 @@ pub fn init(fb: &mut KernelFramebuffer) {
         height: fb.height,
         line_height: get_glyph('A').map(|g| g.height() + 1).unwrap_or(16),
         framebuffer,
+        enable_scroll: true, // default on, toggle in main.rs
     };
 
     *WRITER.lock() = Some(writer);
@@ -131,11 +164,11 @@ fn draw_glyph(
 ) {
     let width = glyph.width();
     let height = glyph.height();
-    let bitmap = glyph.raster(); // &[&[u8]]
+    let bitmap = glyph.raster();
 
     for row in 0..height {
         for col in 0..width {
-            let pixel = bitmap[row][col]; // ✅ fix: index row then column
+            let pixel = bitmap[row][col];
             let x = cursor_x + col;
             let y = cursor_y + row;
 
@@ -147,6 +180,21 @@ fn draw_glyph(
                     rgb(bg)
                 };
             }
+        }
+    }
+}
+
+/// Scroll the framebuffer up by `line_height` pixels
+fn scroll_up(framebuffer: &mut [u32], screen_width: usize, screen_height: usize, line_height: usize, bg: (u8,u8,u8)) {
+    let row_pixels = line_height * screen_width;
+    let total_pixels = screen_width * screen_height;
+
+    framebuffer.copy_within(row_pixels..total_pixels, 0);
+
+    // Clear bottom rows
+    for y in (screen_height - line_height)..screen_height {
+        for x in 0..screen_width {
+            framebuffer[y * screen_width + x] = rgb(bg);
         }
     }
 }

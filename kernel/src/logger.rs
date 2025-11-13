@@ -2,10 +2,7 @@
 
 use log::{Record, Level, Metadata, LevelFilter, set_logger, set_max_level};
 use crate::writer::{WRITER, LogLevel};
-use alloc::format;
 use core::fmt::Write;
-
-extern crate alloc;
 
 /// The global logger instance for the kernel.
 pub struct KernelLogger;
@@ -29,7 +26,7 @@ impl log::Log for KernelLogger {
                     Level::Warn  => LogLevel::Warn,
                     Level::Error => LogLevel::Error,
                 };
-                tw.log(level, record.args()); // ✅ zero-allocation, correct type
+                tw.log(level, *record.args()); // zero-allocation, correct type
             }
         }
     }
@@ -43,6 +40,8 @@ pub fn logger_init() {
     set_max_level(LevelFilter::Trace); // Change to Info, Debug, etc. as needed
 
     if let Some(ref mut writer) = *WRITER.lock() {
-    writer.write_str("[INFO] Logger initialized\n");
+        writer.log(LogLevel::Info, format_args!("Logger initialized"));
+
+    }
 }
-}
+

@@ -26,6 +26,7 @@ use kernel::{
     logger::KernelLogger,
 };
  use kernel::logger::logger_init;
+ use core::fmt::Write;
 
 static LOGGER: KernelLogger = KernelLogger;
 
@@ -48,13 +49,19 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // ✍️ Initialize WRITER
     writer::init(&mut fb);
 
-
-    use core::fmt::Write;
-
-if let Some(ref mut writer) = *WRITER.lock() {
-    writer.set_color((255, 255, 255), (0, 0, 0)); // white on black
-    writer.write_str("🐾 Bulldog Kernel Booting...\n");
+if let Some(writer) = WRITER.lock().as_mut() {
+    writer.enable_scroll = false; // disable scrolling
 }
+
+
+    
+
+if let Some(ref mut writer) = WRITER.lock().as_mut() {
+    writer.enable_scroll = true; // explicitly enable scrolling
+    writer.set_color((255, 255, 255), (0, 0, 0)); // white on black
+    writer.write_str("🐾 Bulldog Kernel Booting...\n").unwrap();
+} // lock released here
+
     
   //  writer::boot_log(&format!(
    // "Framebuffer format: {:?}, size: {}x{}",
@@ -76,15 +83,20 @@ if let Some(ref mut writer) = *WRITER.lock() {
     log::info!("System boot complete");
     log::warn!("Low memory warning");
     log::error!("Page fault at 0xdeadbeef");
+    log::trace!("Trace message for detailed debugging");
 
     // 🔠 Glyph info
     if let Some(glyph) = get_glyph('A') {
-      //  log::info!("Glyph size: {}x{}", glyph.width(), glyph.height());
-      //  log::info!("Raster rows: {}", glyph.raster().len());
+        log::info!("Glyph size: {}x{}", glyph.width(), glyph.height());
+        log::info!("Raster rows: {}", glyph.raster().len());
     }
 
+
     // ✅ Test output
-  //  println!("Hello\nWorld");
+    println!("Hello\nWorld");
+
+   
+
 
     loop {
         unsafe { core::arch::asm!("hlt"); }
@@ -118,5 +130,6 @@ fn serial_print(s: &str) {
         serial_write_byte(byte);
     }
 }
+
 
 
