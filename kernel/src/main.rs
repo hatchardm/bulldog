@@ -43,7 +43,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     fb.clear_fast(BLACK);
 
     // ✍️ Initialize WRITER
-    writer::init(&mut fb);
+    writer::framebuffer_init(&mut fb);
 
     // 🐾 Boot banner: always white on black
     if let Some(w) = WRITER.lock().as_mut() {

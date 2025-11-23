@@ -51,7 +51,7 @@ pub mod color;
 pub mod logger;
 
 
-pub fn init(
+pub fn kernel_init(
     memory_regions: &[MemoryRegion],
     phys_mem_offset: VirtAddr,
 ) -> Result<(), MapToError<Size4KiB>> {

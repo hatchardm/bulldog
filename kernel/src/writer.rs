@@ -137,7 +137,7 @@ lazy_static::lazy_static! {
     pub static ref WRITER: Mutex<Option<TextWriter>> = Mutex::new(None);
 }
 
-pub fn init(fb: &mut KernelFramebuffer) {
+pub fn framebuffer_init(fb: &mut KernelFramebuffer) {
     let pixel_count = (fb.pitch * fb.height) / 4;
     let framebuffer = unsafe {
         slice::from_raw_parts_mut(fb.ptr as *mut u32, pixel_count)
