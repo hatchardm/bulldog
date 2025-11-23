@@ -5,6 +5,7 @@ use crate::font::get_glyph;
 use noto_sans_mono_bitmap::RasterizedChar;
 use core::slice;
 
+/// Log levels for kernel logging
 #[derive(Copy, Clone)]
 pub enum LogLevel {
     Error,
@@ -12,6 +13,18 @@ pub enum LogLevel {
     Info,
     Debug,
     Trace,
+}
+
+impl LogLevel {
+    pub fn prefix(&self) -> &'static str {
+        match self {
+            LogLevel::Trace => "[TRACE] ",
+            LogLevel::Debug => "[DEBUG] ",
+            LogLevel::Info  => "[INFO ] ",
+            LogLevel::Warn  => "[WARN ] ",
+            LogLevel::Error => "[ERROR] ",
+        }
+    }
 }
 
 pub struct TextWriter {
@@ -27,6 +40,14 @@ pub struct TextWriter {
 }
 
 impl TextWriter {
+    /// Log a message with prefix and color based on level
+    pub fn log(&mut self, level: LogLevel, args: Arguments) {
+        self.set_log_level_color(level);
+        let _ = self.write_str(level.prefix());
+        let _ = self.write_fmt(args);
+        self.write_char('\n');
+    }
+
     pub fn write_str(&mut self, s: &str) {
         for c in s.chars() {
             self.write_char(c);
@@ -37,8 +58,6 @@ impl TextWriter {
         if c == '\n' {
             self.cursor_x = 0;
             self.cursor_y += self.line_height;
-
-            // Scroll if needed
             if self.cursor_y + self.line_height >= self.height {
                 if self.enable_scroll {
                     scroll_up(
@@ -72,7 +91,6 @@ impl TextWriter {
             if self.cursor_x + glyph.width() >= self.width {
                 self.cursor_x = 0;
                 self.cursor_y += self.line_height;
-
                 if self.cursor_y + self.line_height >= self.height {
                     if self.enable_scroll {
                         scroll_up(
@@ -105,13 +123,6 @@ impl TextWriter {
             LogLevel::Trace => self.set_color((128, 128, 128), (0, 0, 0)), // gray
         }
     }
-
- pub fn log(&mut self, level: LogLevel, args: Arguments) {
-        self.set_log_level_color(level);
-        let _ = self.write_fmt(args);
-        self.write_char('\n');
-    }
-
 }
 
 impl Write for TextWriter {
@@ -128,7 +139,6 @@ lazy_static::lazy_static! {
 
 pub fn init(fb: &mut KernelFramebuffer) {
     let pixel_count = (fb.pitch * fb.height) / 4;
-
     let framebuffer = unsafe {
         slice::from_raw_parts_mut(fb.ptr as *mut u32, pixel_count)
     };
@@ -142,7 +152,7 @@ pub fn init(fb: &mut KernelFramebuffer) {
         height: fb.height,
         line_height: get_glyph('A').map(|g| g.height() + 1).unwrap_or(16),
         framebuffer,
-        enable_scroll: true, // default on, toggle in main.rs
+        enable_scroll: true,
     };
 
     *WRITER.lock() = Some(writer);

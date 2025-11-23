@@ -4,7 +4,7 @@ use core::{
     mem,
     ptr::{self, NonNull},
 };
-//use crate::{print, println};
+use log::{info, debug, warn, error, trace}; // log macros
 use linked_list_allocator::LockedHeap;
 
 
@@ -31,7 +31,7 @@ const BLOCK_SIZES: &[usize] = &[8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 fn list_index(layout: &Layout) -> Option<usize> {
     let required_block_size = layout.size().max(layout.align());
     let index = BLOCK_SIZES.iter().position(|&s| s >= required_block_size);
-   // println!("list_index: layout={:?} → index={:?}", layout, index);
+   debug!("list_index: layout={:?} → index={:?}", layout, index);
     index
 }
 
@@ -64,7 +64,7 @@ impl FixedSizeBlockAllocator {
     /// heap bounds are valid and that the heap is unused. This method must be
     /// called only once.
    pub unsafe fn init(&mut self, heap_start: usize, heap_size: usize) {
-   // println!("FixedSizeBlockAllocator::init called with heap_start={:#x}, size={}", heap_start, heap_size);  //reinstate when framebuffer is ready    
+    debug!("FixedSizeBlockAllocator::init called with heap_start={:#x}, size={}", heap_start, heap_size);  //reinstate when framebuffer is ready    
     // Align heap start to satisfy stricter layout requirements
     let aligned_start = align_up(heap_start, 128); // or 64 if you prefer
     let adjusted_size = heap_size - (aligned_start - heap_start);
@@ -77,7 +77,7 @@ impl FixedSizeBlockAllocator {
 
     // Add regions for fixed-size blocks
     for &block_size in BLOCK_SIZES {
-     //   println!("Adding region for block size: {}", block_size);
+        debug!("Adding region for block size: {}", block_size);
         self.add_region(aligned_start, adjusted_size, block_size);
     }
 }
@@ -90,10 +90,10 @@ pub fn fallback_alloc(&self, layout: Layout) -> *mut u8 {
 
 
     if ptr.is_null() {
- //       println!("Fallback alloc failed: layout={:?}", layout);   //reinstate when framebuffer is ready
+        debug!("Fallback alloc failed: layout={:?}", layout);   //reinstate when framebuffer is ready
         ptr::null_mut()
     } else {
-       // println!("Fallback alloc success: layout={:?}, ptr={:p}", layout, ptr); //reinstate when framebuffer is ready
+        debug!("Fallback alloc success: layout={:?}, ptr={:p}", layout, ptr); //reinstate when framebuffer is ready
         ptr
     }
 }

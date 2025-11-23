@@ -10,13 +10,11 @@ use x86_64::{
 use linked_list_allocator::LockedHeap;
 use crate::allocator::fixed_size_block::FixedSizeBlockAllocator;
 use crate::allocator::fixed_size_block::align_up;
-//use crate::{print, println};
+use log::{info, debug, warn, error, trace}; // log macros
 
 #[global_allocator]
 pub static ALLOCATOR: Locked<FixedSizeBlockAllocator> = Locked::new(FixedSizeBlockAllocator::new());
 
-
-pub mod bump;
 pub mod fixed_size_block;
 pub mod linked_list;
 pub const HEAP_START: usize = 0x_4444_4444_0000;
@@ -27,7 +25,7 @@ pub fn init_heap(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
 ) -> Result<(), MapToError<Size4KiB>> {
-  //  println!("Entered init_heap");
+    info!("Entered init_heap");
     let page_range = {
         let heap_start = VirtAddr::new(HEAP_START as u64);
         let heap_end = heap_start + HEAP_SIZE - 1u64;
@@ -54,11 +52,11 @@ let aligned_start = VirtAddr::new(
 let adjusted_size = (HEAP_SIZE as u64) - (aligned_start.as_u64() - heap_start.as_u64());
 let aligned_start_ptr: *mut u8 = aligned_start.as_mut_ptr();
 
-//println!(
- //   "Allocator init: aligned_start = {:#x}, adjusted_size = {}",
-   // aligned_start.as_u64(),
-   // adjusted_size
-//);
+debug!(
+    "Allocator init: aligned_start = {:#x}, adjusted_size = {}",
+     aligned_start.as_u64(),
+     adjusted_size
+);
 
 
 unsafe {
@@ -69,10 +67,10 @@ unsafe {
 
 
 
-//println!(
-//    "Heap initialized: start = {:#x}, size = {} bytes",
-    //aligned_start, adjusted_size
-//);
+debug!(
+    "Heap initialized: start = {:#x}, size = {} bytes",
+     aligned_start, adjusted_size
+);
 
 
     Ok(())

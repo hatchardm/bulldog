@@ -2,7 +2,7 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, Pag
 use lazy_static::lazy_static;
 use spin;
 use crate::gdt::{DOUBLE_FAULT_IST_INDEX, LAPIC_IST_INDEX};
-//use crate::{print, println};
+use log::{info, debug, warn, error, trace}; // log macros
 use crate::hlt_loop;
 use crate::apic::send_eoi;
 use core::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
@@ -105,9 +105,9 @@ pub fn init_idt() {
     for i in 48..=50 {
         let addr = IDT[i].handler_addr().as_u64();
         if addr == 0 {
-         //   println!("IDT[{}] is NOT set", i);
+            error!("IDT[{}] is NOT set", i);
         } else {
-          //  println!("IDT[{}] handler address: {:#x}", i, addr);
+            info!("IDT[{}] handler address: {:#x}", i, addr);
         }
     }
 
@@ -119,41 +119,41 @@ pub fn init_idt() {
 // === Exception Handlers ===
 
 extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame) {
-  //  println!("EXCEPTION: DIVIDE ERROR\n{:#?}", stack_frame);
+    error!("EXCEPTION: DIVIDE ERROR\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn debug_handler(stack_frame: InterruptStackFrame) {
-  //  println!("EXCEPTION: DEBUG\n{:#?}", stack_frame);
+    error!("EXCEPTION: DEBUG\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn non_maskable_interrupt_handler(stack_frame: InterruptStackFrame) {
-  //  println!("EXCEPTION: NON MASKABLE\n{:#?}", stack_frame);
+    error!("EXCEPTION: NON MASKABLE\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
-  //  println!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
+    error!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
 }
 
 extern "x86-interrupt" fn overflow_handler(stack_frame: InterruptStackFrame) {
-  //  println!("EXCEPTION: OVERFLOW\n{:#?}", stack_frame);
+    error!("EXCEPTION: OVERFLOW\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn bound_range_exceeded_handler(stack_frame: InterruptStackFrame) {
-   // println!("EXCEPTION: BOUND RANGE EXCEEDED\n{:#?}", stack_frame);
+    error!("EXCEPTION: BOUND RANGE EXCEEDED\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFrame) {
- //  println!("EXCEPTION: INVALID OPCODE\n{:#?}", stack_frame);
+    error!("EXCEPTION: INVALID OPCODE\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptStackFrame) {
-  //  println!("EXCEPTION: DEVICE NOT AVAILABLE\n{:#?}", stack_frame);
+    error!("EXCEPTION: DEVICE NOT AVAILABLE\n{:#?}", stack_frame);
     hlt_loop();
 }
 
@@ -162,10 +162,10 @@ extern "x86-interrupt" fn page_fault_handler(
     error_code: PageFaultErrorCode,
 ) {
     use x86_64::registers::control::Cr2;
-  //  println!("EXCEPTION: PAGE FAULT");
-  //  println!("Accessed Address: {:?}", Cr2::read());
- //   println!("Error Code: {:?}", error_code);
- // println!("{:#?}", stack_frame);
+    error!("EXCEPTION: PAGE FAULT");
+    error!("Accessed Address: {:?}", Cr2::read());
+    error!("Error Code: {:?}", error_code);
+    error!("{:#?}", stack_frame);
     hlt_loop();
 }
 
@@ -173,68 +173,68 @@ extern "x86-interrupt" fn double_fault_handler(
     stack_frame: InterruptStackFrame,
     _error_code: u64,
 ) -> ! {
- //   println!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
+    error!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn invalid_tss_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-  //  println!("EXCEPTION: INVALID TSS\n{:#?}", stack_frame);
+    error!("EXCEPTION: INVALID TSS\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn segment_not_present_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
- //   println!("EXCEPTION: SEGMENT NOT PRESENT\n{:#?}", stack_frame);
+    error!("EXCEPTION: SEGMENT NOT PRESENT\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
- //   println!("EXCEPTION: STACK SEGMENT FAULT\n{:#?}", stack_frame);
+    error!("EXCEPTION: STACK SEGMENT FAULT\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn general_protection_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
- //   println!("EXCEPTION: GENERAL PROTECTION FAULT\n{:#?}", stack_frame);
-  //  println!("Error Code: {}", _error_code);
+    error!("EXCEPTION: GENERAL PROTECTION FAULT\n{:#?}", stack_frame);
+    error!("Error Code: {}", _error_code);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn x87_floating_point_handler(stack_frame: InterruptStackFrame) {
-  //  println!("EXCEPTION: X87 FLOATING POINT\n{:#?}", stack_frame);
+    error!("EXCEPTION: X87 FLOATING POINT\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn alignment_check_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-  //  println!("EXCEPTION: ALIGNMENT CHECK\n{:#?}", stack_frame);
+    error!("EXCEPTION: ALIGNMENT CHECK\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn machine_check_handler(stack_frame: InterruptStackFrame) -> ! {
-   // println!("EXCEPTION: MACHINE CHECK\n{:#?}", stack_frame);
+    error!("EXCEPTION: MACHINE CHECK\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn simd_floating_point_handler(stack_frame: InterruptStackFrame) {
-   // println!("EXCEPTION: SIMD FLOATING POINT\n{:#?}", stack_frame);
+    error!("EXCEPTION: SIMD FLOATING POINT\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn virtualization_handler(stack_frame: InterruptStackFrame) {
- //   println!("EXCEPTION: VIRTUALIZATION\n{:#?}", stack_frame);
+    error!("EXCEPTION: VIRTUALIZATION\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn cp_protection_exception_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-  // println!("EXCEPTION: CP PROTECTION\n{:#?}", stack_frame);
+    error!("EXCEPTION: CP PROTECTION\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn hv_injection_exception_handler(stack_frame: InterruptStackFrame) {
-   // println!("EXCEPTION: HV INJECTION\n{:#?}", stack_frame);
+    error!("EXCEPTION: HV INJECTION\n{:#?}", stack_frame);
     hlt_loop();
 }
 
 extern "x86-interrupt" fn security_exception_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-   // println!("EXCEPTION: SECURITY\n{:#?}", stack_frame);
+    error!("EXCEPTION: SECURITY\n{:#?}", stack_frame);
     hlt_loop();
 }
 
@@ -252,24 +252,24 @@ extern "x86-interrupt" fn lapic_timer_handler(_stack_frame: InterruptStackFrame)
 
 
 extern "x86-interrupt" fn spurious_handler(_stack_frame: InterruptStackFrame) {
-   // println!("SPURIOUS INTERRUPT");
+    error!("SPURIOUS INTERRUPT");
     send_eoi();
 }
 
 extern "x86-interrupt" fn default_handler(_stack_frame: InterruptStackFrame) {
-  //  println!("UNHANDLED INTERRUPT");
+    error!("UNHANDLED INTERRUPT");
 }
 
 
 extern "x86-interrupt" fn log_vector_32(_stack_frame: InterruptStackFrame) {
- //  println!("UNHANDLED INTERRUPT: vector 32");
+   error!("UNHANDLED INTERRUPT: vector 32");
 }
 extern "x86-interrupt" fn log_vector_33(_stack_frame: InterruptStackFrame) {
-  //  println!("UNHANDLED INTERRUPT: vector 33");
+    error!("UNHANDLED INTERRUPT: vector 33");
 }
 
 extern "x86-interrupt" fn unhandled_vector_48(_stack_frame: InterruptStackFrame) {
- //   println!("UNHANDLED INTERRUPT: vector 48");
+    error!("UNHANDLED INTERRUPT: vector 48");
 }
 
 //extern "x86-interrupt" fn log_vector_49(_stack_frame: InterruptStackFrame) {
@@ -278,13 +278,13 @@ extern "x86-interrupt" fn unhandled_vector_48(_stack_frame: InterruptStackFrame)
 
 
 extern "x86-interrupt" fn unhandled_vector_255(_stack_frame: InterruptStackFrame) {
-   // println!("UNHANDLED INTERRUPT: vector 255");
+    error!("UNHANDLED INTERRUPT: vector 255");
 }
 
 
 
 extern "x86-interrupt" fn log_vector_50(_stack_frame: InterruptStackFrame) {
-  //  println!("UNHANDLED INTERRUPT: vector 50");
+    error!("UNHANDLED INTERRUPT: vector 50");
 }
 
 

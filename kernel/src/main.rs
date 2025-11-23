@@ -2,9 +2,6 @@
 #![no_main]
 #![allow(warnings)]
 
-#[macro_use]
-extern crate kernel;
-
 extern crate alloc;
 
 use bootloader_api::{
@@ -13,7 +10,6 @@ use bootloader_api::{
     info::BootInfo,
 };
 use core::panic::PanicInfo;
-use log::LevelFilter;
 use x86_64::instructions::port::Port;
 use alloc::string::ToString;
 
@@ -23,12 +19,12 @@ use kernel::{
     font::get_glyph,
     color::*,
     hlt_loop,
-    logger::KernelLogger,
+    logger::logger_init,
 };
- use kernel::logger::logger_init;
- use core::fmt::Write;
 
-static LOGGER: KernelLogger = KernelLogger;
+use core::fmt::Write;
+use log::{info, debug, warn, error, trace}; // log macros
+use log::LevelFilter;
 
 const CONFIG: BootloaderConfig = {
     let mut config = BootloaderConfig::new_default();
@@ -49,54 +45,35 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // ✍️ Initialize WRITER
     writer::init(&mut fb);
 
-if let Some(writer) = WRITER.lock().as_mut() {
-    writer.enable_scroll = false; // disable scrolling
-}
+    // 🐾 Boot banner: always white on black
+    if let Some(w) = WRITER.lock().as_mut() {
+        w.enable_scroll = true;
+        w.set_color((255, 255, 255), (0, 0, 0)); // force white
+        let _ = writeln!(w, "🐾 Bulldog Kernel Booting...");
+    }
 
-
-    
-
-if let Some(ref mut writer) = WRITER.lock().as_mut() {
-    writer.enable_scroll = true; // explicitly enable scrolling
-    writer.set_color((255, 255, 255), (0, 0, 0)); // white on black
-    writer.write_str("🐾 Bulldog Kernel Booting...\n").unwrap();
-} // lock released here
-
-    
-  //  writer::boot_log(&format!(
-   // "Framebuffer format: {:?}, size: {}x{}",
-   // fb.pixel_format, fb.width, fb.height
-//));
-    
     // 🪵 Logging
-    logger_init();
+    logger_init(LevelFilter::Warn); //Set filter level Info, Debug, Error, Warn and Trace
+    info!("Framebuffer format: {:?}, size: {}x{}", fb.pixel_format, fb.width, fb.height);
 
+    // 🔠 Glyph diagnostics
     if let Some(glyph) = get_glyph('A') {
-    log::info!("Glyph 'A' width={} height={}", glyph.width(), glyph.height());
-    log::info!("Raster rows: {}", glyph.raster().len());
-    for (i, row) in glyph.raster().iter().enumerate() {
-        log::info!("Row {} has {} bytes", i, row.len());
-    }
-}
-
-    log::debug!("Debugging enabled");
-    log::info!("System boot complete");
-    log::warn!("Low memory warning");
-    log::error!("Page fault at 0xdeadbeef");
-    log::trace!("Trace message for detailed debugging");
-
-    // 🔠 Glyph info
-    if let Some(glyph) = get_glyph('A') {
-        log::info!("Glyph size: {}x{}", glyph.width(), glyph.height());
-        log::info!("Raster rows: {}", glyph.raster().len());
+        info!("Glyph 'A' width={} height={}", glyph.width(), glyph.height());
+        info!("Raster rows: {}", glyph.raster().len());
+        for (i, row) in glyph.raster().iter().enumerate() {
+            info!("Row {} has {} bytes", i, row.len());
+        }
     }
 
+    debug!("Debugging enabled");
+    info!("System boot complete");
+    warn!("Low memory warning");
+    error!("Page fault at 0xdeadbeef");
+    trace!("Trace message for detailed debugging");
 
     // ✅ Test output
-    println!("Hello\nWorld");
-
-   
-
+    info!("Hello");
+    info!("World");
 
     loop {
         unsafe { core::arch::asm!("hlt"); }
@@ -130,6 +107,9 @@ fn serial_print(s: &str) {
         serial_write_byte(byte);
     }
 }
+
+
+
 
 
 

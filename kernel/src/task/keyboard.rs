@@ -1,4 +1,4 @@
-//use crate::{print, println};
+use log::{info, debug, warn, error, trace}; // log macros
 use conquer_once::spin::OnceCell;
 use core::{
     pin::Pin,
@@ -10,6 +10,7 @@ use futures_util::{
     task::AtomicWaker,
 };
 use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
+use crate::{print, println};
 
 static SCANCODE_QUEUE: OnceCell<ArrayQueue<u8>> = OnceCell::uninit();
 static WAKER: AtomicWaker = AtomicWaker::new();
@@ -20,12 +21,12 @@ static WAKER: AtomicWaker = AtomicWaker::new();
 pub(crate) fn add_scancode(scancode: u8) {
     if let Ok(queue) = SCANCODE_QUEUE.try_get() {
         if let Err(_) = queue.push(scancode) {
-       //     println!("WARNING: scancode queue full; dropping keyboard input");
+            warn!("WARNING: scancode queue full; dropping keyboard input");
         } else {
             WAKER.wake();
         }
     } else {
-    //    println!("WARNING: scancode queue uninitialized");
+        warn!("WARNING: scancode queue uninitialized");
     }
 }
 
@@ -74,8 +75,8 @@ pub async fn print_keypresses() {
         if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
             if let Some(key) = keyboard.process_keyevent(key_event) {
                 match key {
-     //               DecodedKey::Unicode(character) => print!("{}", character), // reinstate when framework is ready
-     //               DecodedKey::RawKey(key) => print!("{:?}", key),            // reinstate when framework is ready
+                    DecodedKey::Unicode(character) => print!("{}", character), // reinstate when framework is ready
+                    DecodedKey::RawKey(key) => print!("{:?}", key),            // reinstate when framework is ready
                     _ => {
                 }
             }
