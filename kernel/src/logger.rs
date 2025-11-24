@@ -1,67 +1,49 @@
-use core::sync::atomic::{AtomicU8, Ordering};
-use log::{Record, Level, Metadata, LevelFilter, set_logger, set_max_level};
-use crate::writer::{WRITER, LogLevel};
+use core::sync::atomic::{AtomicUsize, Ordering};
+use log::{self, Level, LevelFilter, Metadata, Record, set_max_level};
 
-/// The global logger instance for the kernel.
-pub struct KernelLogger;
+use crate::writer::WRITER;
 
-/// Static instance used by the log crate.
-static LOGGER: KernelLogger = KernelLogger;
+pub static CURRENT_LEVEL: AtomicUsize = AtomicUsize::new(LevelFilter::Info as usize);
 
-/// Atomic to hold the current max level filter (stored as u8).
-static CURRENT_LEVEL: AtomicU8 = AtomicU8::new(LevelFilter::Info as u8);
+struct BulldogLogger;
+static LOGGER: BulldogLogger = BulldogLogger;
 
-impl log::Log for KernelLogger {
+impl log::Log for BulldogLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        let current = match CURRENT_LEVEL.load(Ordering::Relaxed) {
-            0 => LevelFilter::Off,
-            1 => LevelFilter::Error,
-            2 => LevelFilter::Warn,
-            3 => LevelFilter::Info,
-            4 => LevelFilter::Debug,
-            5 => LevelFilter::Trace,
-            _ => LevelFilter::Info,
-        };
-        metadata.level() <= current
+        // Defer to the global filter set via set_max_level
+        metadata.level() <= log::max_level()
     }
 
     fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            let mut writer = WRITER.lock();
-            if let Some(ref mut tw) = *writer {
-                let level = match record.level() {
-                    Level::Trace => LogLevel::Trace,
-                    Level::Debug => LogLevel::Debug,
-                    Level::Info  => LogLevel::Info,
-                    Level::Warn  => LogLevel::Warn,
-                    Level::Error => LogLevel::Error,
-                };
-                tw.log(level, record.args().clone());
-            }
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        if let Some(w) = WRITER.lock().as_mut() {
+            let lvl = match record.level() {
+                Level::Error => crate::writer::LogLevel::Error,
+                Level::Warn  => crate::writer::LogLevel::Warn,
+                Level::Info  => crate::writer::LogLevel::Info,
+                Level::Debug => crate::writer::LogLevel::Debug,
+                Level::Trace => crate::writer::LogLevel::Trace,
+            };
+            w.log(lvl, format_args!("{}", record.args()));
         }
     }
 
     fn flush(&self) {}
 }
 
-/// Initializes the kernel logger and sets the maximum log level.
 pub fn logger_init(level: LevelFilter) {
-    set_logger(&LOGGER).unwrap();
-    set_max_level(level);
-    CURRENT_LEVEL.store(level as u8, Ordering::Relaxed);
-
-    if let Some(ref mut writer) = *WRITER.lock() {
-        writer.log(LogLevel::Info, format_args!("Logger initialized at {:?} level", level));
+    // Safe here because we are in single-threaded early boot and will only ever set one logger
+    unsafe {
+        log::set_logger_racy(&LOGGER);
     }
+    set_max_level(level);
+    CURRENT_LEVEL.store(level as usize, Ordering::Relaxed);
+
+    log::info!("Logger initialized at {:?} level", level);
 }
 
-/// Allows runtime adjustment of the log level filter.
-pub fn set_log_level(level: LevelFilter) {
-    set_max_level(level);
-    CURRENT_LEVEL.store(level as u8, Ordering::Relaxed);
 
-    if let Some(ref mut writer) = *WRITER.lock() {
-        writer.log(LogLevel::Info, format_args!("Log level changed to {:?}", level));
-    }
-}
+
 

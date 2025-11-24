@@ -246,7 +246,7 @@ impl BootInfoFrameAllocator {
             continue;
         }
 
-        info!("Adding frame: {:#x}", addr);
+        debug!("Adding frame: {:#x}", addr);
         temp_frames[count] = Some(frame);
         count += 1;
     }
@@ -280,7 +280,7 @@ impl BootInfoFrameAllocator {
             match region.kind {
                 MemoryRegionKind::Usable => {
                     // Optional: log skipped usable regions
-                     info!("Skipping usable region: {:#x} - {:#x}", region.start, region.end);
+                     debug!("Skipping usable region: {:#x} - {:#x}", region.start, region.end);
                     continue;
                 }
                 _ => {

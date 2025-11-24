@@ -14,17 +14,19 @@ use x86_64::instructions::port::Port;
 use alloc::string::ToString;
 
 use kernel::{
-    framebuffer::{self, KernelFramebuffer},
-    writer::{self, WRITER, TextWriter},
+    framebuffer::KernelFramebuffer,
+    writer::{self, WRITER},
     font::get_glyph,
     color::*,
     hlt_loop,
     logger::logger_init,
+    kernel_init,
 };
 
 use core::fmt::Write;
-use log::{info, debug, warn, error, trace}; // log macros
+use log::{info, debug, warn, error, trace};
 use log::LevelFilter;
+use x86_64::VirtAddr;   // bring VirtAddr into scope
 
 const CONFIG: BootloaderConfig = {
     let mut config = BootloaderConfig::new_default();
@@ -38,43 +40,45 @@ entry_point!(kernel_main, config = &CONFIG);
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // 🎨 Framebuffer setup
-    let framebuffer = boot_info.framebuffer.as_mut().unwrap();
+    let framebuffer = boot_info.framebuffer.as_mut().expect("BootInfo.framebuffer must be present");
     let mut fb = KernelFramebuffer::from_bootloader(framebuffer);
     fb.clear_fast(BLACK);
 
     // ✍️ Initialize WRITER
     writer::framebuffer_init(&mut fb);
 
-    // 🐾 Boot banner: always white on black
+    // 🐾 Boot banner
     if let Some(w) = WRITER.lock().as_mut() {
         w.enable_scroll = true;
-        w.set_color((255, 255, 255), (0, 0, 0)); // force white
+        w.set_color((255, 255, 255), (0, 0, 0));
         let _ = writeln!(w, "🐾 Bulldog Kernel Booting...");
     }
 
     // 🪵 Logging
-    logger_init(LevelFilter::Warn); //Set filter level Info, Debug, Error, Warn and Trace
+    logger_init(LevelFilter::Info);
+    info!("Exited logger_init");
     info!("Framebuffer format: {:?}, size: {}x{}", fb.pixel_format, fb.width, fb.height);
 
     // 🔠 Glyph diagnostics
     if let Some(glyph) = get_glyph('A') {
         info!("Glyph 'A' width={} height={}", glyph.width(), glyph.height());
-        info!("Raster rows: {}", glyph.raster().len());
-        for (i, row) in glyph.raster().iter().enumerate() {
-            info!("Row {} has {} bytes", i, row.len());
-        }
     }
 
-    debug!("Debugging enabled");
-    info!("System boot complete");
-    warn!("Low memory warning");
-    error!("Page fault at 0xdeadbeef");
-    trace!("Trace message for detailed debugging");
+    // ✅ Prepare memory inputs for kernel_init
+    let phys_mem_offset = VirtAddr::new(
+        boot_info.physical_memory_offset.into_option()
+            .expect("BootInfo must provide physical memory offset")
+    );
+    let memory_regions: &'static [bootloader_api::info::MemoryRegion] = &boot_info.memory_regions;
 
-    // ✅ Test output
-    info!("Hello");
-    info!("World");
+    match kernel_init(memory_regions, phys_mem_offset) {
+        Ok(_) => info!("kernel_init completed successfully"),
+        Err(e) => error!("kernel_init failed: {:?}", e),
+    }
 
+    info!("Returned to maim");
+
+    // 🚀 Enter main loop
     loop {
         unsafe { core::arch::asm!("hlt"); }
     }
