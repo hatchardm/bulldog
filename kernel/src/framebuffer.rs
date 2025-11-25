@@ -42,7 +42,8 @@ impl KernelFramebuffer {
 
     /// Clear the entire framebuffer with a solid color
     pub fn clear_fast(&mut self, color: u32) {
-        let total_pixels = (self.pitch / 4) * self.height;
+        let stride_pixels = self.pitch / 4;
+        let total_pixels = stride_pixels * self.height;
         let pixel_ptr = self.ptr as *mut u32;
         for i in 0..total_pixels {
             unsafe { pixel_ptr.add(i).write_volatile(color); }
@@ -54,7 +55,8 @@ impl KernelFramebuffer {
         if x >= self.width || y >= self.height {
             return;
         }
-        let idx = y * (self.pitch / 4) + x;
+        let stride_pixels = self.pitch / 4;
+        let idx = y * stride_pixels + x;
         let pixel_ptr = self.ptr as *mut u32;
         unsafe { pixel_ptr.add(idx).write_volatile(color); }
     }
@@ -73,6 +75,7 @@ pub fn boot_fb_info(boot_info: &BootInfo) -> Option<FbInfo> {
         }
     })
 }
+
 
 
 

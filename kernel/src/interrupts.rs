@@ -6,7 +6,7 @@ use log::{info, debug, warn, error, trace}; // log macros
 use crate::hlt_loop;
 use crate::apic::send_eoi;
 use core::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
-use crate::time::tick;
+use crate::time::{tick, health_check};
 
 
 
@@ -53,8 +53,8 @@ lazy_static! {
                 .set_stack_index(DOUBLE_FAULT_IST_INDEX);
 
             idt[LAPIC_TIMER_VECTOR as usize]
-                .set_handler_fn(lapic_timer_handler);
-             //   .set_stack_index(LAPIC_IST_INDEX);
+                .set_handler_fn(lapic_timer_handler)
+                .set_stack_index(LAPIC_IST_INDEX);
 
             idt[SPURIOUS_VECTOR as usize].set_handler_fn(spurious_handler);
         }
@@ -120,17 +120,17 @@ pub fn init_idt() {
 
 extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame) {
     error!("EXCEPTION: DIVIDE ERROR\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: DIVIDE ERROR");
 }
 
 extern "x86-interrupt" fn debug_handler(stack_frame: InterruptStackFrame) {
     error!("EXCEPTION: DEBUG\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: DEBUG");
 }
 
 extern "x86-interrupt" fn non_maskable_interrupt_handler(stack_frame: InterruptStackFrame) {
     error!("EXCEPTION: NON MASKABLE\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: NON MASKABLE");
 }
 
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
@@ -139,22 +139,22 @@ extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
 
 extern "x86-interrupt" fn overflow_handler(stack_frame: InterruptStackFrame) {
     error!("EXCEPTION: OVERFLOW\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: OVERFLOW");
 }
 
 extern "x86-interrupt" fn bound_range_exceeded_handler(stack_frame: InterruptStackFrame) {
     error!("EXCEPTION: BOUND RANGE EXCEEDED\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: BOUND RANGE EXCEEDED");
 }
 
 extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFrame) {
     error!("EXCEPTION: INVALID OPCODE\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("Invalid opcode");
 }
 
 extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptStackFrame) {
     error!("EXCEPTION: DEVICE NOT AVAILABLE\n{:#?}", stack_frame);
-    hlt_loop();
+     panic!("EXCEPTION: DEVICE NOT AVAILABLE");
 }
 
 extern "x86-interrupt" fn page_fault_handler(
@@ -166,7 +166,7 @@ extern "x86-interrupt" fn page_fault_handler(
     error!("Accessed Address: {:?}", Cr2::read());
     error!("Error Code: {:?}", error_code);
     error!("{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: PAGE FAULT");
 }
 
 extern "x86-interrupt" fn double_fault_handler(
@@ -174,78 +174,78 @@ extern "x86-interrupt" fn double_fault_handler(
     _error_code: u64,
 ) -> ! {
     error!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: DOUBLE FAULT");
 }
 
 extern "x86-interrupt" fn invalid_tss_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
     error!("EXCEPTION: INVALID TSS\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: INVALID TSS");
 }
 
 extern "x86-interrupt" fn segment_not_present_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
     error!("EXCEPTION: SEGMENT NOT PRESENT\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: SEGMENT NOT PRESENT");
 }
 
 extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
     error!("EXCEPTION: STACK SEGMENT FAULT\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: STACK SEGMENT FAULT");
 }
 
 extern "x86-interrupt" fn general_protection_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
     error!("EXCEPTION: GENERAL PROTECTION FAULT\n{:#?}", stack_frame);
     error!("Error Code: {}", _error_code);
-    hlt_loop();
+    panic!("EXCEPTION: GENEREAL PROTECTION FAULT");
 }
 
 extern "x86-interrupt" fn x87_floating_point_handler(stack_frame: InterruptStackFrame) {
     error!("EXCEPTION: X87 FLOATING POINT\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: X87 FLOATING POINT");
 }
 
 extern "x86-interrupt" fn alignment_check_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
     error!("EXCEPTION: ALIGNMENT CHECK\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: ALIGMENT CHECK");
 }
 
 extern "x86-interrupt" fn machine_check_handler(stack_frame: InterruptStackFrame) -> ! {
     error!("EXCEPTION: MACHINE CHECK\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: MACHINE CHECK");
 }
 
 extern "x86-interrupt" fn simd_floating_point_handler(stack_frame: InterruptStackFrame) {
     error!("EXCEPTION: SIMD FLOATING POINT\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: SIMD FLOATING POINT");
 }
 
 extern "x86-interrupt" fn virtualization_handler(stack_frame: InterruptStackFrame) {
     error!("EXCEPTION: VIRTUALIZATION\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: VIRTUALIZATION");
 }
 
 extern "x86-interrupt" fn cp_protection_exception_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
     error!("EXCEPTION: CP PROTECTION\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: CP PROTECTION");
 }
 
 extern "x86-interrupt" fn hv_injection_exception_handler(stack_frame: InterruptStackFrame) {
     error!("EXCEPTION: HV INJECTION\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: HV INJECTION");
 }
 
 extern "x86-interrupt" fn security_exception_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
     error!("EXCEPTION: SECURITY\n{:#?}", stack_frame);
-    hlt_loop();
+    panic!("EXCEPTION: SECURITY");
 }
 
 
 
 
 extern "x86-interrupt" fn lapic_timer_handler(_stack_frame: InterruptStackFrame) {
-    let rsp: u64;
-    unsafe { core::arch::asm!("mov {}, rsp", out(reg) rsp) };
-    unsafe { LAPIC_RSP = rsp };
+    tick();
+    send_eoi();
 }
+
 
 
 

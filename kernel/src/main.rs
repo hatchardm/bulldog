@@ -21,8 +21,9 @@ use kernel::{
     hlt_loop,
     logger::logger_init,
     kernel_init,
+    
 };
-
+use kernel::time;
 use core::fmt::Write;
 use log::{info, debug, warn, error, trace};
 use log::LevelFilter;
@@ -78,10 +79,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     info!("Returned to maim");
 
-    // 🚀 Enter main loop
-    loop {
-        unsafe { core::arch::asm!("hlt"); }
-    }
+
+
+   hlt_loop();
+
+
 }
 
 #[panic_handler]

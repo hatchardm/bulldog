@@ -8,13 +8,15 @@
 
     pub const LAPIC_VIRT_BASE: u64 = 0xFFFF_FF00_0000_0000;
     pub const LAPIC_BASE: usize = LAPIC_VIRT_BASE as usize;
+    pub const SPURIOUS_VECTOR: u32 = 0xFF;
 
-    #[repr(u32)]
-    pub enum LapicTimer {
-    OneShot = 0b00,
-    Periodic = 0b01,
-    TscDeadline = 0b10,
+   #[repr(u32)]
+pub enum LapicTimer {
+    OneShot     = 0b00 << 17,
+    Periodic    = 0b01 << 17,
+    TscDeadline = 0b10 << 17,
 }
+
 
 
 
@@ -76,23 +78,26 @@ pub fn setup_apic() {
     info!("LAPIC ID: {:#x}, CPUID APIC ID: {:#x}", id, cpuid_id);
 
     // Spurious Interrupt Vector Register (SVR)
-    lapic_write(LapicRegister::SVR, 0x100 | LAPIC_TIMER_VECTOR as u32);
-    info!("SVR written");
-
+    lapic_write(LapicRegister::SVR, 0x100 | SPURIOUS_VECTOR);
+    info!("SVR written (enable + spurious=0xFF)");
     // Timer setup
     lapic_write(LapicRegister::DIVIDE_CONFIG, 0b0011); // Divide by 16
 
-    let value = LAPIC_TIMER_VECTOR as u32; // One-shot mode
+   lapic_write(
+    LapicRegister::LVT_TIMER,
+    LAPIC_TIMER_VECTOR as u32 | LapicTimer::Periodic as u32
+);
 
-    lapic_write(LapicRegister::LVT_TIMER, value);
+// Read back to confirm mode + vector
+let lvt = lapic_read(LapicRegister::LVT_TIMER);
+info!(
+    "LVT_TIMER: {:#x} (periodic bit set? {})",
+    lvt,
+    (lvt & (1 << 17)) != 0
+);
 
 
-    
-
-    let lvt = lapic_read(LapicRegister::LVT_TIMER);
-    info!("LVT_TIMER: {:#x}", lvt);
-
-    lapic_write(LapicRegister::INITIAL_COUNT, 1_000_000); // Adjust as needed
+    lapic_write(LapicRegister::INITIAL_COUNT, 500_000); // Adjust as needed
 
     let current = lapic_read(LapicRegister::CURRENT_COUNT);
     info!("LAPIC CURRENT COUNT: {}", current);
@@ -107,10 +112,8 @@ pub fn setup_apic() {
 
 
     pub fn send_eoi() {
-    
-        lapic_write(LapicRegister::EOI, 0);
-
-    }
+    lapic_write(LapicRegister::EOI, 0);
+}
 
 
     #[inline]

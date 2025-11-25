@@ -3,7 +3,6 @@ use spin::Mutex;
 use crate::framebuffer::KernelFramebuffer;
 use crate::font::get_glyph;
 use noto_sans_mono_bitmap::RasterizedChar;
-use core::slice;
 
 /// Log levels for kernel logging
 #[derive(Copy, Clone)]
@@ -32,9 +31,10 @@ pub struct TextWriter {
     pub bg_color: (u8, u8, u8),
     pub cursor_x: usize,
     pub cursor_y: usize,
-    pub width: usize,
-    pub height: usize,
+    pub width: usize,          // visible width
+    pub height: usize,         // visible height
     pub line_height: usize,
+    pub stride_pixels: usize,  // actual pixels per row (pitch / 4)
     pub framebuffer: &'static mut [u32],
     pub enable_scroll: bool,
 }
@@ -43,12 +43,13 @@ impl TextWriter {
     /// Log a message with prefix and color based on level
     pub fn log(&mut self, level: LogLevel, args: Arguments) {
         self.set_log_level_color(level);
-        let _ = self.write_str(level.prefix());
+        self.write_str_inner(level.prefix());
         let _ = self.write_fmt(args);
         self.write_char('\n');
     }
 
-    pub fn write_str(&mut self, s: &str) {
+    /// Internal helper to write a string (avoids recursion)
+    pub fn write_str_inner(&mut self, s: &str) {
         for c in s.chars() {
             self.write_char(c);
         }
@@ -62,7 +63,7 @@ impl TextWriter {
                 if self.enable_scroll {
                     scroll_up(
                         self.framebuffer,
-                        self.width,
+                        self.stride_pixels,
                         self.height,
                         self.line_height,
                         self.bg_color,
@@ -81,7 +82,7 @@ impl TextWriter {
                 self.fg_color,
                 self.bg_color,
                 self.framebuffer,
-                self.width,
+                self.stride_pixels,
                 self.height,
                 self.cursor_x,
                 self.cursor_y,
@@ -95,7 +96,7 @@ impl TextWriter {
                     if self.enable_scroll {
                         scroll_up(
                             self.framebuffer,
-                            self.width,
+                            self.stride_pixels,
                             self.height,
                             self.line_height,
                             self.bg_color,
@@ -125,9 +126,10 @@ impl TextWriter {
     }
 }
 
-impl Write for TextWriter {
+// Implement fmt::Write safely
+impl fmt::Write for TextWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.write_str(s);
+        self.write_str_inner(s);
         Ok(())
     }
 }
@@ -137,10 +139,12 @@ lazy_static::lazy_static! {
     pub static ref WRITER: Mutex<Option<TextWriter>> = Mutex::new(None);
 }
 
+/// Initialize the global WRITER from a KernelFramebuffer
 pub fn framebuffer_init(fb: &mut KernelFramebuffer) {
-    let pixel_count = (fb.pitch * fb.height) / 4;
-    let framebuffer = unsafe {
-        slice::from_raw_parts_mut(fb.ptr as *mut u32, pixel_count)
+    let stride_pixels = fb.pitch / 4;
+    let len = stride_pixels * fb.height;
+    let framebuffer: &'static mut [u32] = unsafe {
+        core::slice::from_raw_parts_mut(fb.ptr as *mut u32, len)
     };
 
     let writer = TextWriter {
@@ -150,61 +154,74 @@ pub fn framebuffer_init(fb: &mut KernelFramebuffer) {
         cursor_y: 0,
         width: fb.width,
         height: fb.height,
-        line_height: get_glyph('A').map(|g| g.height() + 1).unwrap_or(16),
+        line_height: 16, // match your font’s height
+        stride_pixels,
         framebuffer,
         enable_scroll: true,
     };
 
-    *WRITER.lock() = Some(writer);
+    WRITER.lock().replace(writer);
 }
 
-fn rgb((r, g, b): (u8, u8, u8)) -> u32 {
-    ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+/// Scroll the framebuffer up by one line_height
+pub fn scroll_up(
+    framebuffer: &mut [u32],
+    stride_pixels: usize,
+    height: usize,
+    line_height: usize,
+    bg_color: (u8, u8, u8),
+) {
+    let bg = ((bg_color.0 as u32) << 16)
+           | ((bg_color.1 as u32) << 8)
+           | (bg_color.2 as u32);
+
+    // Shift rows up
+    for y in 0..(height - line_height) {
+        let dst = y * stride_pixels;
+        let src = (y + line_height) * stride_pixels;
+        framebuffer.copy_within(src..src + stride_pixels, dst);
+    }
+
+    // Clear the bottom line_height rows
+    for y in (height - line_height)..height {
+        let row_start = y * stride_pixels;
+        for x in 0..stride_pixels {
+            framebuffer[row_start + x] = bg;
+        }
+    }
 }
 
-fn draw_glyph(
+/// Draw a glyph into the framebuffer at (x,y)
+pub fn draw_glyph(
     glyph: &RasterizedChar,
     fg: (u8, u8, u8),
     bg: (u8, u8, u8),
     framebuffer: &mut [u32],
-    screen_width: usize,
-    screen_height: usize,
-    cursor_x: usize,
-    cursor_y: usize,
+    stride_pixels: usize,
+    height: usize,
+    x: usize,
+    y: usize,
 ) {
-    let width = glyph.width();
-    let height = glyph.height();
-    let bitmap = glyph.raster();
+    let fg_color = ((fg.0 as u32) << 16) | ((fg.1 as u32) << 8) | (fg.2 as u32);
+    let bg_color = ((bg.0 as u32) << 16) | ((bg.1 as u32) << 8) | (bg.2 as u32);
 
-    for row in 0..height {
-        for col in 0..width {
-            let pixel = bitmap[row][col];
-            let x = cursor_x + col;
-            let y = cursor_y + row;
+    let glyph_width = glyph.width();
+    let glyph_height = glyph.height();
+    let raster: &[&[u8]] = glyph.raster();
 
-            if x < screen_width && y < screen_height {
-                let fb_idx = y * screen_width + x;
-                framebuffer[fb_idx] = if pixel > 0 {
-                    rgb(fg)
-                } else {
-                    rgb(bg)
-                };
-            }
+    for row in 0..glyph_height {
+        if y + row >= height { break; }
+        let row_start = (y + row) * stride_pixels;
+        let row_data: &[u8] = raster[row];
+        for col in 0..glyph_width {
+            if x + col >= stride_pixels { break; }
+            let idx = row_start + (x + col);
+            let alpha: u8 = row_data[col];
+            framebuffer[idx] = if alpha > 0 { fg_color } else { bg_color };
         }
     }
 }
 
-/// Scroll the framebuffer up by `line_height` pixels
-fn scroll_up(framebuffer: &mut [u32], screen_width: usize, screen_height: usize, line_height: usize, bg: (u8,u8,u8)) {
-    let row_pixels = line_height * screen_width;
-    let total_pixels = screen_width * screen_height;
 
-    framebuffer.copy_within(row_pixels..total_pixels, 0);
 
-    // Clear bottom rows
-    for y in (screen_height - line_height)..screen_height {
-        for x in 0..screen_width {
-            framebuffer[y * screen_width + x] = rgb(bg);
-        }
-    }
-}
+

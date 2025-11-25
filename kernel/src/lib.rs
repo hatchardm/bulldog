@@ -35,12 +35,12 @@ pub mod time;
 pub mod font;
 pub mod color;
 pub mod logger;
-
 use crate::allocator::ALLOCATOR;
 use crate::apic::{lapic_read, LapicRegister};
 use crate::apic::setup_apic;
 use crate::memory::{BootInfoFrameAllocator, PreHeapAllocator};
 use crate::memory::{init_offset_page_table, map_lapic_mmio};
+
 
 pub fn kernel_init(
     memory_regions: &'static [MemoryRegion],
@@ -172,11 +172,7 @@ pub fn kernel_init(
     Ok(())
 }
 
-pub fn hlt_loop() -> ! {
-    loop {
-        x86_64::instructions::hlt();
-    }
-}
+
 
 pub fn disable_pic() {
     unsafe {
@@ -192,3 +188,24 @@ fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
     error!("PANIC: allocation error — size: {}, align: {}", layout.size(), layout.align());
     panic!("allocation error: {:?}", layout)
 }
+
+
+
+pub fn hlt_loop() -> ! {
+    // Tune to your tick rate and expected responsiveness.
+    let mut wd = crate::time::Watchdog::new(5000u64, 3u32, 2u32);
+
+    loop {
+        // Sleep until next interrupt (timer tick should increment TICKS).
+        unsafe { core::arch::asm!("hlt"); }
+
+        // Silent unless stall persists.
+        wd.check();
+
+        // Single heartbeat source.
+        crate::time::health_check(1000);
+    }
+}
+
+
+
