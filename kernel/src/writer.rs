@@ -4,7 +4,7 @@ use crate::framebuffer::KernelFramebuffer;
 use crate::font::get_glyph;
 use noto_sans_mono_bitmap::RasterizedChar;
 
-/// Log levels for kernel logging
+/// Kernel log levels mapped to color-coded output.
 #[derive(Copy, Clone)]
 pub enum LogLevel {
     Error,
@@ -15,6 +15,7 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
+    /// Returns the textual prefix associated with each log level.
     pub fn prefix(&self) -> &'static str {
         match self {
             LogLevel::Trace => "[TRACE] ",
@@ -26,21 +27,23 @@ impl LogLevel {
     }
 }
 
+/// TextWriter renders characters into the kernel framebuffer.
+/// It tracks cursor position, colors, and handles scrolling.
 pub struct TextWriter {
     pub fg_color: (u8, u8, u8),
     pub bg_color: (u8, u8, u8),
     pub cursor_x: usize,
     pub cursor_y: usize,
-    pub width: usize,          // visible width
-    pub height: usize,         // visible height
-    pub line_height: usize,
-    pub stride_pixels: usize,  // actual pixels per row (pitch / 4)
+    pub width: usize,          // visible width in pixels
+    pub height: usize,         // visible height in pixels
+    pub line_height: usize,    // font height in pixels
+    pub stride_pixels: usize,  // pixels per row (pitch / 4)
     pub framebuffer: &'static mut [u32],
     pub enable_scroll: bool,
 }
 
 impl TextWriter {
-    /// Log a message with prefix and color based on level
+    /// Log a message with level prefix and color.
     pub fn log(&mut self, level: LogLevel, args: Arguments) {
         self.set_log_level_color(level);
         self.write_str_inner(level.prefix());
@@ -48,13 +51,15 @@ impl TextWriter {
         self.write_char('\n');
     }
 
-    /// Internal helper to write a string (avoids recursion)
+    /// Internal helper to write a string without recursion.
     pub fn write_str_inner(&mut self, s: &str) {
         for c in s.chars() {
             self.write_char(c);
         }
     }
 
+    /// Write a single character to the framebuffer.
+    /// Handles newline, scrolling, and glyph rendering.
     pub fn write_char(&mut self, c: char) {
         if c == '\n' {
             self.cursor_x = 0;
@@ -110,11 +115,13 @@ impl TextWriter {
         }
     }
 
+    /// Set foreground and background colors.
     pub fn set_color(&mut self, fg: (u8, u8, u8), bg: (u8, u8, u8)) {
         self.fg_color = fg;
         self.bg_color = bg;
     }
 
+    /// Set colors based on log level.
     pub fn set_log_level_color(&mut self, level: LogLevel) {
         match level {
             LogLevel::Error => self.set_color((255, 0, 0), (0, 0, 0)),     // red
@@ -126,7 +133,7 @@ impl TextWriter {
     }
 }
 
-// Implement fmt::Write safely
+/// Implement fmt::Write so TextWriter can be used with `write!` macros.
 impl fmt::Write for TextWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.write_str_inner(s);
@@ -134,12 +141,14 @@ impl fmt::Write for TextWriter {
     }
 }
 
-// Global writer instance
+/// Global writer instance protected by a spinlock.
+/// Initialized during framebuffer setup.
 lazy_static::lazy_static! {
     pub static ref WRITER: Mutex<Option<TextWriter>> = Mutex::new(None);
 }
 
-/// Initialize the global WRITER from a KernelFramebuffer
+/// Initialize the global WRITER from a KernelFramebuffer.
+/// Maps the framebuffer pointer into a slice and constructs TextWriter.
 pub fn framebuffer_init(fb: &mut KernelFramebuffer) {
     let stride_pixels = fb.pitch / 4;
     let len = stride_pixels * fb.height;
@@ -154,7 +163,7 @@ pub fn framebuffer_init(fb: &mut KernelFramebuffer) {
         cursor_y: 0,
         width: fb.width,
         height: fb.height,
-        line_height: 16, // match your font’s height
+        line_height: 16, // must match font height
         stride_pixels,
         framebuffer,
         enable_scroll: true,
@@ -163,7 +172,8 @@ pub fn framebuffer_init(fb: &mut KernelFramebuffer) {
     WRITER.lock().replace(writer);
 }
 
-/// Scroll the framebuffer up by one line_height
+/// Scroll the framebuffer up by one line_height.
+/// Shifts rows up and clears the bottom region.
 pub fn scroll_up(
     framebuffer: &mut [u32],
     stride_pixels: usize,
@@ -175,14 +185,12 @@ pub fn scroll_up(
            | ((bg_color.1 as u32) << 8)
            | (bg_color.2 as u32);
 
-    // Shift rows up
     for y in 0..(height - line_height) {
         let dst = y * stride_pixels;
         let src = (y + line_height) * stride_pixels;
         framebuffer.copy_within(src..src + stride_pixels, dst);
     }
 
-    // Clear the bottom line_height rows
     for y in (height - line_height)..height {
         let row_start = y * stride_pixels;
         for x in 0..stride_pixels {
@@ -191,7 +199,8 @@ pub fn scroll_up(
     }
 }
 
-/// Draw a glyph into the framebuffer at (x,y)
+/// Draw a glyph into the framebuffer at (x,y).
+/// Uses alpha channel from raster to decide between fg and bg color.
 pub fn draw_glyph(
     glyph: &RasterizedChar,
     fg: (u8, u8, u8),
@@ -221,6 +230,7 @@ pub fn draw_glyph(
         }
     }
 }
+
 
 
 

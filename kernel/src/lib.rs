@@ -1,3 +1,12 @@
+//! Bulldog kernel crate root.
+//!
+//! - `#![no_std]`: no standard library, only `core`.
+//! - `#![no_main]`: custom entry point defined elsewhere.
+//! - Feature gates enable x86 interrupt ABI, custom test harness, and allocator error handling.
+//!
+//! This file wires together core subsystems (APIC, GDT, interrupts, memory, etc.)
+//! and provides the kernel initialization routine and idle loop.
+
 #![no_std]
 #![allow(warnings)]
 #![cfg_attr(test, no_main)]
@@ -12,7 +21,7 @@ extern crate rlibc;
 
 use alloc::vec::Vec;
 use bootloader_api::info::MemoryRegion;
-use log::{info, debug, warn, error, trace};
+use log::{info, debug, error};
 use x86_64::{
     PhysAddr, VirtAddr,
     structures::paging::{
@@ -28,20 +37,27 @@ pub mod interrupts;
 pub mod gdt;
 pub mod allocator;
 pub mod memory;
-pub mod task;
 pub mod stack;
 pub mod apic;
 pub mod time;
 pub mod font;
 pub mod color;
 pub mod logger;
+
 use crate::allocator::ALLOCATOR;
-use crate::apic::{lapic_read, LapicRegister};
-use crate::apic::setup_apic;
-use crate::memory::{BootInfoFrameAllocator, PreHeapAllocator};
-use crate::memory::{init_offset_page_table, map_lapic_mmio};
+use crate::apic::{lapic_read, LapicRegister, setup_apic};
+use crate::memory::{BootInfoFrameAllocator, PreHeapAllocator, init_offset_page_table, map_lapic_mmio};
 
-
+/// Kernel initialization routine.
+/// 
+/// - Disables legacy PIC.
+/// - Sets up paging and frame allocator.
+/// - Initializes heap.
+/// - Loads GDT and IDT.
+/// - Maps LAPIC MMIO and IST stack.
+/// - Configures APIC and enables interrupts.
+/// 
+/// Returns `Ok(())` if initialization succeeds, or a `MapToError` if paging fails.
 pub fn kernel_init(
     memory_regions: &'static [MemoryRegion],
     phys_mem_offset: VirtAddr,
@@ -53,7 +69,7 @@ pub fn kernel_init(
     info!("Creating mapper");
     let mut mapper = unsafe { init_offset_page_table(phys_mem_offset) };
 
-    // Log memory regions directly without transmuting to 'static
+    // Log memory regions directly
     for region in memory_regions.iter() {
         debug!(
             "Region: start={:#x}, end={:#x}, kind={:?}",
@@ -80,9 +96,6 @@ pub fn kernel_init(
     info!("Frame allocator ready");
 
     // Optional: identity-map framebuffer region here if needed
-    // If WRITER’s framebuffer becomes invalid post-paging, pass the framebuffer phys range into this
-    // function and identity-map it:
-    // memory::identity_map_framebuffer(&mut mapper, &mut frame_allocator, fb_phys_start, fb_len_bytes)?;
 
     debug!("Logging memory regions with virt addresses");
     for region in memory_regions.iter() {
@@ -110,7 +123,6 @@ pub fn kernel_init(
         Page::containing_address(lapic_stack_end - 1u64),
     );
 
-    // Sync allocator state before marking frames
     frame_allocator.mark_used_frames();
 
     for frame in frame_allocator.allocated.iter_used_frames() {
@@ -129,7 +141,6 @@ pub fn kernel_init(
 
     debug!("LAPIC stack range: virt={:#x} - {:#x}", lapic_stack_start, lapic_stack_end);
     for page in lapic_stack_range {
-        // Translate the current mapping, if any
         match mapper.translate_addr(page.start_address()) {
             Some(phys) => {
                 let frame = PhysFrame::containing_address(phys);
@@ -146,16 +157,10 @@ pub fn kernel_init(
                 }
             }
             None => {
-                // If unmapped, you need a physical frame to back this page.
-                // Choose an appropriate frame source for the LAPIC stack.
-                let phys = page.start_address(); // This is a VIRT address; you must provide a real PhysFrame.
                 error!(
                     "No translation for LAPIC stack page {:?}; supply a backing PhysFrame from allocator",
-                    phys
+                    page.start_address()
                 );
-                // If you intend identity mapping for the stack region, compute its physical range and use that:
-                // let frame = PhysFrame::containing_address(PhysAddr::new(desired_phys_addr));
-                // unsafe { mapper.map_to(page, frame, PageTableFlags::PRESENT | PageTableFlags::WRITABLE, &mut frame_allocator)?.flush(); }
             }
         }
     }
@@ -172,40 +177,44 @@ pub fn kernel_init(
     Ok(())
 }
 
-
-
+/// Disable legacy PIC by masking all IRQs.
+/// Ensures APIC is the sole interrupt controller.
 pub fn disable_pic() {
     unsafe {
         let mut pic1 = x86_64::instructions::port::Port::new(0x21);
         let mut pic2 = x86_64::instructions::port::Port::new(0xA1);
-        pic1.write(0xFFu8); // Mask all IRQs on PIC1
-        pic2.write(0xFFu8); // Mask all IRQs on PIC2
+        pic1.write(0xFFu8);
+        pic2.write(0xFFu8);
     }
 }
 
+/// Allocator error handler.
+/// Logs and panics on allocation failure.
 #[alloc_error_handler]
 fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
     error!("PANIC: allocation error — size: {}, align: {}", layout.size(), layout.align());
     panic!("allocation error: {:?}", layout)
 }
 
-
-
+/// Halt loop: the kernel’s idle routine.
+/// 
+/// - Puts the CPU into a low‑power state (`hlt`) until the next interrupt.
+/// - Uses a watchdog to detect stalls in the tick counter.
+/// - Runs a periodic health check to log kernel liveness.
+/// 
+/// Safety: must only be called once interrupts and the LAPIC timer are configured.
+/// Otherwise the CPU will halt indefinitely without waking.
 pub fn hlt_loop() -> ! {
-    // Tune to your tick rate and expected responsiveness.
     let mut wd = crate::time::Watchdog::new(5000u64, 3u32, 2u32);
 
     loop {
-        // Sleep until next interrupt (timer tick should increment TICKS).
         unsafe { core::arch::asm!("hlt"); }
-
-        // Silent unless stall persists.
         wd.check();
-
-        // Single heartbeat source.
         crate::time::health_check(1000);
     }
 }
+
+
 
 
 

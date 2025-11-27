@@ -1,21 +1,25 @@
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use lazy_static::lazy_static;
-use spin;
 use crate::gdt::{DOUBLE_FAULT_IST_INDEX, LAPIC_IST_INDEX};
-use log::{info, debug, warn, error, trace}; // log macros
-use crate::hlt_loop;
+use log::{info, error};
 use crate::apic::send_eoi;
-use core::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
-use crate::time::{tick, health_check};
+use core::sync::atomic::{AtomicUsize, AtomicU64};
+use crate::time::tick;
 
-
-
+/// LAPIC timer interrupt vector.
 pub const LAPIC_TIMER_VECTOR: u8 = 0x31;
+
+/// Spurious interrupt vector (used to enable LAPIC).
 const SPURIOUS_VECTOR: u8 = 0xFF;
+
+/// Tracks LAPIC timer hits (atomic counter).
 pub static LAPIC_HITS: AtomicUsize = AtomicUsize::new(0);
+
+/// Raw LAPIC state (unsafe globals for debugging).
 pub static mut LAPIC_RSP: u64 = 0;
 pub static mut LAPIC_HITS_RAW: u64 = 0;
 
+/// Global Interrupt Descriptor Table (IDT).
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
@@ -42,7 +46,7 @@ lazy_static! {
         idt.hv_injection_exception.set_handler_fn(hv_injection_exception_handler);
         idt.security_exception.set_handler_fn(security_exception_handler);
 
-        // IST exceptions
+        // IST exceptions (use alternate stacks for reliability).
         unsafe {
             idt.page_fault
                 .set_handler_fn(page_fault_handler)
@@ -59,33 +63,23 @@ lazy_static! {
             idt[SPURIOUS_VECTOR as usize].set_handler_fn(spurious_handler);
         }
 
+        // Example custom vectors
         unsafe {
-       idt[32].set_handler_fn(log_vector_32);
-       idt[33].set_handler_fn(log_vector_33);
-       ;
-
-
-
-
-       idt[48].set_handler_fn(unhandled_vector_48); // 0x30
-       idt[255].set_handler_fn(unhandled_vector_255); // 0xFF
-
-     //  idt[49].set_handler_fn(log_vector_49);
-       idt[50].set_handler_fn(log_vector_50);
-    
+            idt[32].set_handler_fn(log_vector_32);
+            idt[33].set_handler_fn(log_vector_33);
+            idt[48].set_handler_fn(unhandled_vector_48);
+            idt[50].set_handler_fn(log_vector_50);
+            idt[255].set_handler_fn(unhandled_vector_255);
         }
-
-
 
         // Fallback handlers for unassigned vectors
         for i in 0..256 {
             let skip = i == 8
-            || (10..=15).contains(&i)
-            || (17..=18).contains(&i)
-            || (21..=27).contains(&i)
-            || (29..=31).contains(&i)
-            || i == LAPIC_TIMER_VECTOR as usize;
-
+                || (10..=15).contains(&i)
+                || (17..=18).contains(&i)
+                || (21..=27).contains(&i)
+                || (29..=31).contains(&i)
+                || i == LAPIC_TIMER_VECTOR as usize;
 
             if skip || idt[i].handler_addr().as_u64() != 0 {
                 continue;
@@ -100,8 +94,9 @@ lazy_static! {
     };
 }
 
+/// Initialize and load the IDT.
+/// Logs handler addresses for selected vectors.
 pub fn init_idt() {
-    // Inspect handler addresses for vectors 48–50
     for i in 48..=50 {
         let addr = IDT[i].handler_addr().as_u64();
         if addr == 0 {
@@ -110,11 +105,8 @@ pub fn init_idt() {
             info!("IDT[{}] handler address: {:#x}", i, addr);
         }
     }
-
     IDT.load();
-   // println!("IDT loaded");
 }
-
 
 // === Exception Handlers ===
 
@@ -154,7 +146,7 @@ extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFram
 
 extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptStackFrame) {
     error!("EXCEPTION: DEVICE NOT AVAILABLE\n{:#?}", stack_frame);
-     panic!("EXCEPTION: DEVICE NOT AVAILABLE");
+    panic!("EXCEPTION: DEVICE NOT AVAILABLE");
 }
 
 extern "x86-interrupt" fn page_fault_handler(
@@ -195,7 +187,7 @@ extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStac
 extern "x86-interrupt" fn general_protection_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
     error!("EXCEPTION: GENERAL PROTECTION FAULT\n{:#?}", stack_frame);
     error!("Error Code: {}", _error_code);
-    panic!("EXCEPTION: GENEREAL PROTECTION FAULT");
+    panic!("EXCEPTION: GENERAL PROTECTION FAULT");
 }
 
 extern "x86-interrupt" fn x87_floating_point_handler(stack_frame: InterruptStackFrame) {
@@ -205,7 +197,7 @@ extern "x86-interrupt" fn x87_floating_point_handler(stack_frame: InterruptStack
 
 extern "x86-interrupt" fn alignment_check_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
     error!("EXCEPTION: ALIGNMENT CHECK\n{:#?}", stack_frame);
-    panic!("EXCEPTION: ALIGMENT CHECK");
+    panic!("EXCEPTION: ALIGNMENT CHECK");
 }
 
 extern "x86-interrupt" fn machine_check_handler(stack_frame: InterruptStackFrame) -> ! {
@@ -238,32 +230,30 @@ extern "x86-interrupt" fn security_exception_handler(stack_frame: InterruptStack
     panic!("EXCEPTION: SECURITY");
 }
 
-
-
-
+/// LAPIC timer interrupt handler.
+/// Increments kernel tick and sends EOI to LAPIC.
 extern "x86-interrupt" fn lapic_timer_handler(_stack_frame: InterruptStackFrame) {
     tick();
     send_eoi();
 }
 
-
-
-
-
-
+/// Spurious interrupt handler.
+/// Logs and acknowledges the interrupt.
 extern "x86-interrupt" fn spurious_handler(_stack_frame: InterruptStackFrame) {
     error!("SPURIOUS INTERRUPT");
     send_eoi();
 }
 
+/// Default handler for unassigned vectors.
 extern "x86-interrupt" fn default_handler(_stack_frame: InterruptStackFrame) {
     error!("UNHANDLED INTERRUPT");
 }
 
-
+/// Example custom vector handlers.
 extern "x86-interrupt" fn log_vector_32(_stack_frame: InterruptStackFrame) {
-   error!("UNHANDLED INTERRUPT: vector 32");
+    error!("UNHANDLED INTERRUPT: vector 32");
 }
+
 extern "x86-interrupt" fn log_vector_33(_stack_frame: InterruptStackFrame) {
     error!("UNHANDLED INTERRUPT: vector 33");
 }
@@ -272,20 +262,19 @@ extern "x86-interrupt" fn unhandled_vector_48(_stack_frame: InterruptStackFrame)
     error!("UNHANDLED INTERRUPT: vector 48");
 }
 
-//extern "x86-interrupt" fn log_vector_49(_stack_frame: InterruptStackFrame) {
- //   println!("UNHANDLED INTERRUPT: vector 49");
-//}
+// Example placeholder for vector 49 if needed.
+// extern "x86-interrupt" fn log_vector_49(_stack_frame: InterruptStackFrame) {
+//     error!("UNHANDLED INTERRUPT: vector 49");
+// }
 
+extern "x86-interrupt" fn log_vector_50(_stack_frame: InterruptStackFrame) {
+    error!("UNHANDLED INTERRUPT: vector 50");
+}
 
 extern "x86-interrupt" fn unhandled_vector_255(_stack_frame: InterruptStackFrame) {
     error!("UNHANDLED INTERRUPT: vector 255");
 }
 
-
-
-extern "x86-interrupt" fn log_vector_50(_stack_frame: InterruptStackFrame) {
-    error!("UNHANDLED INTERRUPT: vector 50");
-}
 
 
 

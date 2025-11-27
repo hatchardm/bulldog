@@ -199,75 +199,75 @@ impl BootInfoFrameAllocator {
    }
 }
 
+//=============================END OF FIRST HALF---------------------------------
+
+//-----------------------------START OF SECOND HALF-------------------------------
 
 impl BootInfoFrameAllocator {
+    /// Convert allocator into a vector of frames.
     pub fn into_vec(self) -> Vec<PhysFrame> {
         self.frames
     }
 }
 
 impl BootInfoFrameAllocator {
+    /// Check if a frame is already allocated.
     pub fn is_allocated(&self, frame: PhysFrame) -> bool {
-    self.allocated.contains(frame)
+        self.allocated.contains(frame)
+    }
 }
-
-}
-
 
 impl BootInfoFrameAllocator {
-    pub unsafe fn init_temp(memory_map: &'static [MemoryRegion]) -> ([Option<PhysFrame>; 512], &'static [MemoryRegion])
+    /// Initialize a temporary allocator from memory map.
+    /// 
+    /// Returns up to 512 frames and the memory map reference.
+    /// 
+    /// # Safety
+    /// Must only be called during early boot, before heap initialization.
+    pub unsafe fn init_temp(
+        memory_map: &'static [MemoryRegion],
+    ) -> ([Option<PhysFrame>; 512], &'static [MemoryRegion]) {
+        info!("Entered BootInfoFrameAllocator::init_temp");
+        debug!("BootInfoFrameAllocator::init_temp: memory_map.len = {}", memory_map.len());
 
-{
-      info!("Entered BootInfoFrameAllocator::init_temp");
-      debug!("BootInfoFrameAllocator::init_temp: memory_map.len = {}", memory_map.len());
-//---------------------------------------------------------------------
-//Debug code
+        // Debug: log memory regions
         for (i, region) in memory_map.iter().enumerate() {
-        debug!(
-        "Region {}: start={:#x}, end={:#x}, kind={:?}",
-        i, region.start, region.end, region.kind
-    );
-}
-//end of debug code
-//--------------------------------------------------------------------- 
-
+            debug!(
+                "Region {}: start={:#x}, end={:#x}, kind={:?}",
+                i, region.start, region.end, region.kind
+            );
+        }
 
         let mut temp_frames: [Option<PhysFrame>; 512] = [None; 512];
         let mut count = 0;
 
         for region in memory_map.iter() {
-    for addr in (region.start..region.end).step_by(4096) {
-        if count >= temp_frames.len() {
-            break;
+            for addr in (region.start..region.end).step_by(4096) {
+                if count >= temp_frames.len() {
+                    break;
+                }
+
+                let frame = PhysFrame::containing_address(PhysAddr::new(addr));
+                if frame.start_address().as_u64() < 0x10000 {
+                    continue; // skip low memory
+                }
+
+                debug!("Adding frame: {:#x}", addr);
+                temp_frames[count] = Some(frame);
+                count += 1;
+            }
+
+            if count >= temp_frames.len() {
+                break;
+            }
         }
 
-        let frame = PhysFrame::containing_address(PhysAddr::new(addr));
-        if frame.start_address().as_u64() < 0x10000 {
-            continue;
-        }
-
-        debug!("Adding frame: {:#x}", addr);
-        temp_frames[count] = Some(frame);
-        count += 1;
-    }
-
-    if count >= temp_frames.len() {
-        break;
-    }
-}
-
-    
-
-(temp_frames, memory_map)
-
-
-        
-
-        
+        (temp_frames, memory_map)
     }
 }
 
 impl BootInfoFrameAllocator {
+    /// Mark non‑usable frames as allocated in the bitmap.
     pub fn mark_used_frames(&mut self) {
         info!("Starting mark_used_frames()");
 
@@ -279,12 +279,10 @@ impl BootInfoFrameAllocator {
 
             match region.kind {
                 MemoryRegionKind::Usable => {
-                    // Optional: log skipped usable regions
-                     debug!("Skipping usable region: {:#x} - {:#x}", region.start, region.end);
+                    debug!("Skipping usable region: {:#x} - {:#x}", region.start, region.end);
                     continue;
                 }
                 _ => {
-                    //Debug code
                     debug!(
                         "Marking used region: start={:#x}, end={:#x}, kind={:?}",
                         region.start, region.end, region.kind
@@ -300,10 +298,11 @@ impl BootInfoFrameAllocator {
     }
 }
 
-
-
-   impl BootInfoFrameAllocator {
-    /// Full allocator — requires heap to be initialized
+impl BootInfoFrameAllocator {
+    /// Full allocator — requires heap to be initialized.
+    /// 
+    /// # Safety
+    /// Must only be called once heap is ready.
     pub unsafe fn init(memory_map: &'static [MemoryRegion]) -> Self {
         info!("Entered BootInfoFrameAllocator::init");
         debug!("memory_map.len = {}", memory_map.len());
@@ -314,9 +313,8 @@ impl BootInfoFrameAllocator {
             for addr in (region.start..region.end).step_by(4096) {
                 let frame = PhysFrame::containing_address(PhysAddr::new(addr));
                 if frame.start_address().as_u64() < 0x10000 {
-                    continue;
+                    continue; // skip low memory
                 }
-
                 frames.push(frame);
             }
         }
@@ -326,42 +324,35 @@ impl BootInfoFrameAllocator {
             frames,
             next: 0,
             allocated: FrameBitmap::new(),
-
         }
     }
 }
- 
-
-
 
 unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
-   fn allocate_frame(&mut self) -> Option<PhysFrame> {
-    if self.next >= self.frames.len() {
-        return None;
+    fn allocate_frame(&mut self) -> Option<PhysFrame> {
+        if self.next >= self.frames.len() {
+            return None;
+        }
+        let frame = self.frames[self.next];
+        self.next += 1;
+        self.allocated.mark_used(frame); // track allocation
+        Some(frame)
     }
-    let frame = self.frames[self.next];
-    self.next += 1;
-    self.allocated.mark_used(frame); // ✅ track it
-
-    Some(frame)
 }
 
-
-}
-
-
-
-
-
-/// Maps the LAPIC MMIO region into the virtual address space.
+/// Map the LAPIC MMIO region into the virtual address space.
+/// 
+/// - Virtual base: `LAPIC_VIRT_BASE`
+/// - Physical base: `0xFEE00000`
+/// - Flags: PRESENT | WRITABLE | NO_EXECUTE
 pub fn map_lapic_mmio(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
 ) {
     info!("Mapping LAPIC MMIO region...");
 
-    let virt = VirtAddr::new(crate::apic::LAPIC_VIRT_BASE); // <- match apic.rs
-    let phys = PhysAddr::new(0xFEE00000);                  // LAPIC physical base
+    let virt = VirtAddr::new(crate::apic::LAPIC_VIRT_BASE);
+    let phys = PhysAddr::new(0xFEE00000);
     let page = Page::containing_address(virt);
     let frame = PhysFrame::containing_address(phys);
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
@@ -376,12 +367,7 @@ pub fn map_lapic_mmio(
     info!("LAPIC MMIO fully mapped");
 }
 
-
-
-
-
-
-/// Maps a single page to a physical frame with the given flags.
+/// Map a single page to a physical frame with the given flags.
 pub fn map_page(
     mapper: &mut impl Mapper<Size4KiB>,
     virt: VirtAddr,
@@ -400,6 +386,7 @@ pub fn map_page(
     }
 }
 
+/// Find the first unused frame in the allocator bitmap.
 pub fn find_unused_frame(allocator: &FrameBitmap) -> Option<PhysFrame> {
     for frame in allocator.all_frames() {
         if !allocator.is_used(frame) {
@@ -408,6 +395,7 @@ pub fn find_unused_frame(allocator: &FrameBitmap) -> Option<PhysFrame> {
     }
     None
 }
+
 
 
 

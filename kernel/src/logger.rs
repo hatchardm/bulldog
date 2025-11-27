@@ -3,17 +3,26 @@ use log::{self, Level, LevelFilter, Metadata, Record, set_max_level};
 
 use crate::writer::WRITER;
 
+/// Tracks the current maximum log level filter.
+/// Stored as an atomic so it can be updated safely at runtime.
 pub static CURRENT_LEVEL: AtomicUsize = AtomicUsize::new(LevelFilter::Info as usize);
 
+/// Bulldog’s custom logger implementation.
+/// Routes log records into the kernel’s framebuffer writer.
 struct BulldogLogger;
+
+/// Global logger instance registered with the `log` crate.
 static LOGGER: BulldogLogger = BulldogLogger;
 
 impl log::Log for BulldogLogger {
+    /// Determines if a log record should be processed based on the global filter.
     fn enabled(&self, metadata: &Metadata) -> bool {
-        // Defer to the global filter set via set_max_level
         metadata.level() <= log::max_level()
     }
 
+    /// Handles an incoming log record.
+    /// Converts the `log::Level` into Bulldog’s internal `LogLevel` and forwards
+    /// the formatted message to the global writer.
     fn log(&self, record: &Record) {
         if !self.enabled(record.metadata()) {
             return;
@@ -30,11 +39,18 @@ impl log::Log for BulldogLogger {
         }
     }
 
+    /// Flush is a no‑op because Bulldog’s writer logs directly to framebuffer.
     fn flush(&self) {}
 }
 
+/// Initialize Bulldog’s logger at the given level.
+/// - Registers the global `LOGGER` with the `log` crate.
+/// - Sets the maximum log level filter.
+/// - Stores the level in `CURRENT_LEVEL` for runtime checks.
+/// 
+/// # Safety
+/// This is safe in early boot because only one logger is ever set.
 pub fn logger_init(level: LevelFilter) {
-    // Safe here because we are in single-threaded early boot and will only ever set one logger
     unsafe {
         log::set_logger_racy(&LOGGER);
     }
@@ -43,6 +59,7 @@ pub fn logger_init(level: LevelFilter) {
 
     log::info!("Logger initialized at {:?} level", level);
 }
+
 
 
 

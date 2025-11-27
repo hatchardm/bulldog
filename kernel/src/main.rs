@@ -1,3 +1,12 @@
+//! Bulldog kernel entry point (`main.rs`).
+//!
+//! - `#![no_std]`: no standard library, only `core`.
+//! - `#![no_main]`: custom entry point via `bootloader_api::entry_point!`.
+//! - Configures bootloader stack size and memory mappings.
+//! - Initializes framebuffer, writer, logger, and kernel subsystems.
+//! - Hands off to `kernel_init` for paging/APIC setup.
+//! - Drops into `hlt_loop` as the idle routine.
+
 #![no_std]
 #![no_main]
 #![allow(warnings)]
@@ -21,14 +30,17 @@ use kernel::{
     hlt_loop,
     logger::logger_init,
     kernel_init,
-    
 };
 use kernel::time;
 use core::fmt::Write;
-use log::{info, debug, warn, error, trace};
+use log::{info, error};
 use log::LevelFilter;
-use x86_64::VirtAddr;   // bring VirtAddr into scope
+use x86_64::VirtAddr;
 
+/// Bootloader configuration.
+/// - Kernel stack size: 100 KiB
+/// - Physical memory mapping: dynamic
+/// - Framebuffer mapping: dynamic
 const CONFIG: BootloaderConfig = {
     let mut config = BootloaderConfig::new_default();
     config.kernel_stack_size = 100 * 1024;
@@ -37,6 +49,14 @@ const CONFIG: BootloaderConfig = {
     config
 };
 
+/// Kernel entry point invoked by the bootloader.
+/// 
+/// - Initializes framebuffer and writer.
+/// - Prints boot banner.
+/// - Sets up logging.
+/// - Runs glyph diagnostics.
+/// - Calls `kernel_init` for paging/APIC setup.
+/// - Drops into `hlt_loop` idle routine.
 entry_point!(kernel_main, config = &CONFIG);
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
@@ -77,15 +97,13 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         Err(e) => error!("kernel_init failed: {:?}", e),
     }
 
-    info!("Returned to maim");
+    info!("Returned to main");
 
-
-
-   hlt_loop();
-
-
+    hlt_loop();
 }
 
+/// Panic handler.
+/// Prints panic info over serial port, then halts in `hlt_loop`.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     unsafe {
@@ -101,6 +119,7 @@ fn panic(info: &PanicInfo) -> ! {
     hlt_loop();
 }
 
+/// Write a single byte to COM1 serial port (0x3F8).
 fn serial_write_byte(byte: u8) {
     unsafe {
         let mut port = Port::new(0x3F8);
@@ -108,11 +127,13 @@ fn serial_write_byte(byte: u8) {
     }
 }
 
+/// Print a string to COM1 serial port.
 fn serial_print(s: &str) {
     for byte in s.bytes() {
         serial_write_byte(byte);
     }
 }
+
 
 
 
