@@ -1,168 +1,142 @@
+//! Bulldog kernel entry point (`main.rs`).
+//!
+//! - `#![no_std]`: no standard library, only `core`.
+//! - `#![no_main]`: custom entry point via `bootloader_api::entry_point!`.
+//! - Configures bootloader stack size and memory mappings.
+//! - Initializes framebuffer, writer, logger, and kernel subsystems.
+//! - Hands off to `kernel_init` for paging/APIC setup.
+//! - Drops into `hlt_loop` as the idle routine.
+
 #![no_std]
 #![no_main]
-
+#![allow(warnings)]
 
 extern crate alloc;
 
-use bootloader_api::entry_point;
-use bootloader_api::config::{BootloaderConfig, Mapping};
+use bootloader_api::{
+    config::{BootloaderConfig, Mapping},
+    entry_point,
+    info::BootInfo,
+};
 use core::panic::PanicInfo;
+use x86_64::instructions::port::Port;
+use alloc::string::ToString;
 
+use kernel::{
+    framebuffer::KernelFramebuffer,
+    writer::{self, WRITER},
+    font::get_glyph,
+    color::*,
+    hlt_loop,
+    logger::logger_init,
+    kernel_init,
+};
+use kernel::time;
+use core::fmt::Write;
+use log::{info, error};
+use log::LevelFilter;
+use x86_64::VirtAddr;
 
-//If you used optional features, such as map-physical-memory, you can enable them again through the entry_point macro:
-
-  const CONFIG: BootloaderConfig = {
-  let mut config = BootloaderConfig::new_default();
-  config.kernel_stack_size = 100 * 1024; // 100 KiB
-  config.mappings.physical_memory = Some(Mapping::Dynamic);
-  config
+/// Bootloader configuration.
+/// - Kernel stack size: 100 KiB
+/// - Physical memory mapping: dynamic
+/// - Framebuffer mapping: dynamic
+const CONFIG: BootloaderConfig = {
+    let mut config = BootloaderConfig::new_default();
+    config.kernel_stack_size = 100 * 1024;
+    config.mappings.physical_memory = Some(Mapping::Dynamic);
+    config.mappings.framebuffer = Mapping::Dynamic;
+    config
 };
 
-    use kernel::{print, println};
-    use kernel::allocator;
-    use kernel::memory::{self, BootInfoFrameAllocator};
-    use x86_64::VirtAddr;
-    use kernel::init;
-    use kernel::task::{executor::Executor, keyboard, Task};
-    use kernel::framebuffer;
-    use kernel::interrupts::PICS;
-    use kernel::gdt;
-    use crate::gdt::STACK_SIZE;
-   
-   
+/// Kernel entry point invoked by the bootloader.
+/// 
+/// - Initializes framebuffer and writer.
+/// - Prints boot banner.
+/// - Sets up logging.
+/// - Runs glyph diagnostics.
+/// - Calls `kernel_init` for paging/APIC setup.
+/// - Drops into `hlt_loop` idle routine.
 entry_point!(kernel_main, config = &CONFIG);
 
+fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
+    // 🎨 Framebuffer setup
+    let framebuffer = boot_info.framebuffer.as_mut().expect("BootInfo.framebuffer must be present");
+    let mut fb = KernelFramebuffer::from_bootloader(framebuffer);
+    fb.clear_fast(BLACK);
 
-fn kernel_main(boot_info: &'static mut bootloader_api::info::BootInfo) -> ! {
-    use kernel::gdt::STACK_SIZE;
-    use kernel::stack::STACK;
-    use x86_64::VirtAddr;
-    use x86_64::structures::paging::FrameAllocator;
-    use x86_64::structures::paging::{Page, PageTableFlags, Mapper};
-    use x86_64::structures::paging::mapper::MapToError;
-    use kernel::stack::get_stack_start;
+    // ✍️ Initialize WRITER
+    writer::framebuffer_init(&mut fb);
 
-
-    // Initialize framebuffer
-    framebuffer::init(boot_info.framebuffer.as_mut().unwrap());
-
-    println!(" ");
-    println!("LOADING BULLDOG");
-    println!("   ");
-
-    // Unmask timer and keyboard interrupts
-    unsafe {
-        PICS.lock().initialize();
-        PICS.lock().write_masks(0b1111_1100, 0b1111_1111);
+    // 🐾 Boot banner
+    if let Some(w) = WRITER.lock().as_mut() {
+        w.enable_scroll = true;
+        w.set_color((255, 255, 255), (0, 0, 0));
+        let _ = writeln!(w, "🐾 Bulldog Kernel Booting...");
     }
 
-    // Initialize paging and frame allocator
-    let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset.into_option().unwrap());
-    let mut mapper = unsafe { memory::init(phys_mem_offset) };
-    let mut frame_allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_regions) };
+    // 🪵 Logging
+    logger_init(LevelFilter::Info);
+    info!("Exited logger_init");
+    info!("Framebuffer format: {:?}, size: {}x{}", fb.pixel_format, fb.width, fb.height);
 
-    let stack_start = get_stack_start();
-    let stack_end = stack_start + STACK_SIZE;
-
-    
-
-
-
-for page in Page::range_inclusive(
-    Page::containing_address(stack_start),
-    Page::containing_address(stack_end - 1u64),
-) {
-    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
-
-    // Check if the page is already mapped
-    if mapper.translate_page(page).is_ok() {
-        // Skip already mapped pages
-        continue;
+    // 🔠 Glyph diagnostics
+    if let Some(glyph) = get_glyph('A') {
+        info!("Glyph 'A' width={} height={}", glyph.width(), glyph.height());
     }
 
-    let frame = frame_allocator
-        .allocate_frame()
-        .expect("No usable frame for stack");
+    // ✅ Prepare memory inputs for kernel_init
+    let phys_mem_offset = VirtAddr::new(
+        boot_info.physical_memory_offset.into_option()
+            .expect("BootInfo must provide physical memory offset")
+    );
+    let memory_regions: &'static [bootloader_api::info::MemoryRegion] = &boot_info.memory_regions;
 
-    unsafe {
-        mapper
-            .map_to(page, frame, flags, &mut frame_allocator)
-            .expect("Stack mapping failed")
-            .flush();
+    match kernel_init(memory_regions, phys_mem_offset) {
+        Ok(_) => info!("kernel_init completed successfully"),
+        Err(e) => error!("kernel_init failed: {:?}", e),
     }
+
+    info!("Returned to main");
+
+    hlt_loop();
 }
 
-
-
-
-    
-    // Initialize heap
-    println!("Executing init_heap");
-    allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap initialization failed");
-    println!("I have gone past the allocator init_heap");
-
-    // Load GDT, TSS, and IDT
-    init();
-    println!("INTERUPTS INITIATED");
-    println!("  ");
-
-
-   // println!("Triggering stack overflow...");
-   // trigger_stack_overflow();  //Tests stack overflow fault and Double Fault
-
-   
-    //x86_64::instructions::interrupts::int3();
-
-
-     let mut executor = Executor::new();
-      executor.spawn(Task::new(example_task()));
-      executor.spawn(Task::new(keyboard::print_keypresses()));
-      executor.run();
-
-
-  //  println!("It did not crash");
-
-  //  loop {}
-}
-
-    
-    
-#[cfg(not(test))]
+/// Panic handler.
+/// Prints panic info over serial port, then halts in `hlt_loop`.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     unsafe {
-        framebuffer::WRITER.force_unlock();
-    };
-    println!("{}", info);
-    kernel::hlt_loop();
+        serial_print("KERNEL PANIC: ");
+        if let Some(location) = info.location() {
+            serial_print(" at ");
+            serial_print(location.file());
+            serial_print(":");
+            serial_print(&location.line().to_string());
+        }
+        serial_print("\n");
+    }
+    hlt_loop();
 }
 
-//#[cfg(test)]
-//#[panic_handler]
-//fn panic(info: &PanicInfo) -> ! {
-   // kernel::test_panic_handler(info)
-//}
-
-
-
-
-
-
-async fn async_number() -> u32 {
-  42
+/// Write a single byte to COM1 serial port (0x3F8).
+fn serial_write_byte(byte: u8) {
+    unsafe {
+        let mut port = Port::new(0x3F8);
+        port.write(byte);
+    }
 }
 
-async fn example_task() {
-  let number = async_number().await;
-  println!("async number: {}", number);
+/// Print a string to COM1 serial port.
+fn serial_print(s: &str) {
+    for byte in s.bytes() {
+        serial_write_byte(byte);
+    }
 }
- 
-#[allow(unconditional_recursion)]
-fn trigger_stack_overflow() {
-    trigger_stack_overflow();
-    let _ = unsafe { core::ptr::read_volatile(&0u8) };
 
-   // prevent tail call optimization
-}
+
+
+
+
 
 

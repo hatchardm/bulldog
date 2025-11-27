@@ -1,246 +1,280 @@
-
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use lazy_static::lazy_static;
-use pic8259::ChainedPics;
-use spin;
-use crate::gdt::DOUBLE_FAULT_IST_INDEX;
-use crate::{print, println};
-use crate::hlt_loop;
+use crate::gdt::{DOUBLE_FAULT_IST_INDEX, LAPIC_IST_INDEX};
+use log::{info, error};
+use crate::apic::send_eoi;
+use core::sync::atomic::{AtomicUsize, AtomicU64};
+use crate::time::tick;
 
-pub const PIC_1_OFFSET: u8 = 32;
-pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
+/// LAPIC timer interrupt vector.
+pub const LAPIC_TIMER_VECTOR: u8 = 0x31;
 
-#[derive(Debug, Clone, Copy)]
-#[repr(u8)]
-pub enum InterruptIndex {
-  Timer = PIC_1_OFFSET,
-  Keyboard,
-}
+/// Spurious interrupt vector (used to enable LAPIC).
+const SPURIOUS_VECTOR: u8 = 0xFF;
 
-impl InterruptIndex {
-  fn as_u8(self) -> u8 {
-      self as u8
-  }
+/// Tracks LAPIC timer hits (atomic counter).
+pub static LAPIC_HITS: AtomicUsize = AtomicUsize::new(0);
 
-  fn as_usize(self) -> usize {
-      usize::from(self.as_u8())
-  }
-}
+/// Raw LAPIC state (unsafe globals for debugging).
+pub static mut LAPIC_RSP: u64 = 0;
+pub static mut LAPIC_HITS_RAW: u64 = 0;
 
-pub static PICS: spin::Mutex<ChainedPics> =
-    spin::Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
-
-
-
-
+/// Global Interrupt Descriptor Table (IDT).
 lazy_static! {
-  static ref IDT: InterruptDescriptorTable = {
-    let mut idt = InterruptDescriptorTable::new();
-    
-    idt.divide_error.set_handler_fn(divide_error_handler);
-    idt.debug.set_handler_fn(debug_handler);
-    idt.non_maskable_interrupt.set_handler_fn(non_maskable_interrupt_handler);
-    idt.breakpoint.set_handler_fn(breakpoint_handler);
-    idt.overflow.set_handler_fn(overflow_handler);
-    idt.bound_range_exceeded.set_handler_fn(bound_range_exceeded_handler);
-    idt.invalid_opcode.set_handler_fn(invalid_opcode_handler);
-    idt.device_not_available.set_handler_fn(device_not_available_handler);
-    idt.page_fault.set_handler_fn(page_fault_handler);
-    //idt.double_fault.set_handler_fn(double_fault_handler);
-    unsafe {
-    idt.double_fault
-          .set_handler_fn(double_fault_handler)
-          .set_stack_index(DOUBLE_FAULT_IST_INDEX);
-  };
-    idt.invalid_tss.set_handler_fn(invalid_tss_handler);
-    idt.segment_not_present.set_handler_fn(segment_not_present_handler);
-    idt.stack_segment_fault.set_handler_fn(stack_segment_fault_handler);
-    idt.general_protection_fault.set_handler_fn(general_protection_fault_handler);
-    idt.x87_floating_point.set_handler_fn(x87_floating_point_handler);
-    idt.alignment_check.set_handler_fn(alignment_check_handler);
-    idt.machine_check.set_handler_fn(machine_check_handler);
-    idt.simd_floating_point.set_handler_fn(simd_floating_point_handler);
-    idt.virtualization.set_handler_fn(virtualization_handler);
-    idt.cp_protection_exception.set_handler_fn(cp_protection_exception_handler);
-    idt.hv_injection_exception.set_handler_fn(hv_injection_exception_handler);
-   // idt.vmm_communication_exception.set_handler_fn(vmm_communication_exception_handler);
-    idt.security_exception.set_handler_fn(security_exception_handler);
+    static ref IDT: InterruptDescriptorTable = {
+        let mut idt = InterruptDescriptorTable::new();
 
-    idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
-    idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
+        // Core exceptions
+        idt.divide_error.set_handler_fn(divide_error_handler);
+        idt.debug.set_handler_fn(debug_handler);
+        idt.non_maskable_interrupt.set_handler_fn(non_maskable_interrupt_handler);
+        idt.breakpoint.set_handler_fn(breakpoint_handler);
+        idt.overflow.set_handler_fn(overflow_handler);
+        idt.bound_range_exceeded.set_handler_fn(bound_range_exceeded_handler);
+        idt.invalid_opcode.set_handler_fn(invalid_opcode_handler);
+        idt.device_not_available.set_handler_fn(device_not_available_handler);
+        idt.invalid_tss.set_handler_fn(invalid_tss_handler);
+        idt.segment_not_present.set_handler_fn(segment_not_present_handler);
+        idt.stack_segment_fault.set_handler_fn(stack_segment_fault_handler);
+        idt.general_protection_fault.set_handler_fn(general_protection_fault_handler);
+        idt.x87_floating_point.set_handler_fn(x87_floating_point_handler);
+        idt.alignment_check.set_handler_fn(alignment_check_handler);
+        idt.machine_check.set_handler_fn(machine_check_handler);
+        idt.simd_floating_point.set_handler_fn(simd_floating_point_handler);
+        idt.virtualization.set_handler_fn(virtualization_handler);
+        idt.cp_protection_exception.set_handler_fn(cp_protection_exception_handler);
+        idt.hv_injection_exception.set_handler_fn(hv_injection_exception_handler);
+        idt.security_exception.set_handler_fn(security_exception_handler);
 
-  
+        // IST exceptions (use alternate stacks for reliability).
+        unsafe {
+            idt.page_fault
+                .set_handler_fn(page_fault_handler)
+                .set_stack_index(LAPIC_IST_INDEX);
 
-    idt
+            idt.double_fault
+                .set_handler_fn(double_fault_handler)
+                .set_stack_index(DOUBLE_FAULT_IST_INDEX);
 
-  };
+            idt[LAPIC_TIMER_VECTOR as usize]
+                .set_handler_fn(lapic_timer_handler)
+                .set_stack_index(LAPIC_IST_INDEX);
 
+            idt[SPURIOUS_VECTOR as usize].set_handler_fn(spurious_handler);
+        }
 
+        // Example custom vectors
+        unsafe {
+            idt[32].set_handler_fn(log_vector_32);
+            idt[33].set_handler_fn(log_vector_33);
+            idt[48].set_handler_fn(unhandled_vector_48);
+            idt[50].set_handler_fn(log_vector_50);
+            idt[255].set_handler_fn(unhandled_vector_255);
+        }
+
+        // Fallback handlers for unassigned vectors
+        for i in 0..256 {
+            let skip = i == 8
+                || (10..=15).contains(&i)
+                || (17..=18).contains(&i)
+                || (21..=27).contains(&i)
+                || (29..=31).contains(&i)
+                || i == LAPIC_TIMER_VECTOR as usize;
+
+            if skip || idt[i].handler_addr().as_u64() != 0 {
+                continue;
+            }
+
+            unsafe {
+                idt[i].set_handler_fn(default_handler);
+            }
+        }
+
+        idt
+    };
 }
 
-pub fn init_idt() { 
+/// Initialize and load the IDT.
+/// Logs handler addresses for selected vectors.
+pub fn init_idt() {
+    for i in 48..=50 {
+        let addr = IDT[i].handler_addr().as_u64();
+        if addr == 0 {
+            error!("IDT[{}] is NOT set", i);
+        } else {
+            info!("IDT[{}] handler address: {:#x}", i, addr);
+        }
+    }
+    IDT.load();
+}
 
-  IDT.load();
- 
-  }
-
-
-
-
-
+// === Exception Handlers ===
 
 extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame) {
-  println!("EXCEPTION: DIVIDE ERROR\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: DIVIDE ERROR\n{:#?}", stack_frame);
+    panic!("EXCEPTION: DIVIDE ERROR");
 }
 
 extern "x86-interrupt" fn debug_handler(stack_frame: InterruptStackFrame) {
-  println!("EXCEPTION: DEBUG ERROR\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: DEBUG\n{:#?}", stack_frame);
+    panic!("EXCEPTION: DEBUG");
 }
 
 extern "x86-interrupt" fn non_maskable_interrupt_handler(stack_frame: InterruptStackFrame) {
-  println!("EXCEPTION: NON MASKABLE ERROR\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: NON MASKABLE\n{:#?}", stack_frame);
+    panic!("EXCEPTION: NON MASKABLE");
 }
 
-
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
-
- println!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
- 
-
+    error!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
 }
 
 extern "x86-interrupt" fn overflow_handler(stack_frame: InterruptStackFrame) {
-  println!("EXCEPTION: OVERFLOW HANDLER\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: OVERFLOW\n{:#?}", stack_frame);
+    panic!("EXCEPTION: OVERFLOW");
 }
 
 extern "x86-interrupt" fn bound_range_exceeded_handler(stack_frame: InterruptStackFrame) {
-  println!("EXCEPTION: BOUND RANGE EXCEEDED HANDLER\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: BOUND RANGE EXCEEDED\n{:#?}", stack_frame);
+    panic!("EXCEPTION: BOUND RANGE EXCEEDED");
 }
 
 extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFrame) {
-  println!("EXCEPTION: INVALID OPCODE HANDLER\n{:#?}", stack_frame);
-  hlt_loop();
-  }
+    error!("EXCEPTION: INVALID OPCODE\n{:#?}", stack_frame);
+    panic!("Invalid opcode");
+}
 
 extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptStackFrame) {
-  println!("EXCEPTION: DEVICE NOT AVAILABLE HANDLER\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: DEVICE NOT AVAILABLE\n{:#?}", stack_frame);
+    panic!("EXCEPTION: DEVICE NOT AVAILABLE");
 }
 
 extern "x86-interrupt" fn page_fault_handler(
-  stack_frame: InterruptStackFrame,
-  error_code: PageFaultErrorCode,
+    stack_frame: InterruptStackFrame,
+    error_code: PageFaultErrorCode,
 ) {
-  use x86_64::registers::control::Cr2;
-  println!("EXCEPTION: PAGE FAULT");
-  println!("Accessed Address: {:?}", Cr2::read());
-  println!("Error Code: {:?}", error_code);
-  println!("{:#?}", stack_frame);
-  hlt_loop();
-
+    use x86_64::registers::control::Cr2;
+    error!("EXCEPTION: PAGE FAULT");
+    error!("Accessed Address: {:?}", Cr2::read());
+    error!("Error Code: {:?}", error_code);
+    error!("{:#?}", stack_frame);
+    panic!("EXCEPTION: PAGE FAULT");
 }
 
 extern "x86-interrupt" fn double_fault_handler(
-  stack_frame: InterruptStackFrame,
-  _error_code: u64
+    stack_frame: InterruptStackFrame,
+    _error_code: u64,
 ) -> ! {
-  println!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
-  hlt_loop();
-
+    error!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
+    panic!("EXCEPTION: DOUBLE FAULT");
 }
 
-
 extern "x86-interrupt" fn invalid_tss_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-  println!("EXCEPTION: INVALID TSS HANDLER\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: INVALID TSS\n{:#?}", stack_frame);
+    panic!("EXCEPTION: INVALID TSS");
 }
 
 extern "x86-interrupt" fn segment_not_present_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-  println!("EXCEPTION: SEGMENT NOT PRESENT HANDLER\n{:#?}", stack_frame);
-  hlt_loop();}
+    error!("EXCEPTION: SEGMENT NOT PRESENT\n{:#?}", stack_frame);
+    panic!("EXCEPTION: SEGMENT NOT PRESENT");
+}
 
 extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-  println!("EXCEPTION: STACK SEGMENT FAULT HANDLER\n{:#?}", stack_frame); 
-  hlt_loop();
+    error!("EXCEPTION: STACK SEGMENT FAULT\n{:#?}", stack_frame);
+    panic!("EXCEPTION: STACK SEGMENT FAULT");
 }
 
 extern "x86-interrupt" fn general_protection_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
- println!("EXCEPTION: GENERAL PROTECTION FAULT HANDLER\n{:#?}", stack_frame);
- println!("Error Code: {}", _error_code);
-  hlt_loop();
+    error!("EXCEPTION: GENERAL PROTECTION FAULT\n{:#?}", stack_frame);
+    error!("Error Code: {}", _error_code);
+    panic!("EXCEPTION: GENERAL PROTECTION FAULT");
 }
 
-
-
 extern "x86-interrupt" fn x87_floating_point_handler(stack_frame: InterruptStackFrame) {
-  println!("EXCEPTION: FLOATING POINT HANDLER\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: X87 FLOATING POINT\n{:#?}", stack_frame);
+    panic!("EXCEPTION: X87 FLOATING POINT");
 }
 
 extern "x86-interrupt" fn alignment_check_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-  println!("EXCEPTION: ALIGNMENT CHECK HANDLER\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: ALIGNMENT CHECK\n{:#?}", stack_frame);
+    panic!("EXCEPTION: ALIGNMENT CHECK");
 }
 
 extern "x86-interrupt" fn machine_check_handler(stack_frame: InterruptStackFrame) -> ! {
-  println!("EXCEPTION: MACHINE CHECK HANDLER\n{:#?}", stack_frame);
-  hlt_loop();   
+    error!("EXCEPTION: MACHINE CHECK\n{:#?}", stack_frame);
+    panic!("EXCEPTION: MACHINE CHECK");
 }
 
 extern "x86-interrupt" fn simd_floating_point_handler(stack_frame: InterruptStackFrame) {
-  println!("EXCEPTION: SIMD FLOATING POINT HANDLER\n{:#?}", stack_frame);
-  hlt_loop();}
+    error!("EXCEPTION: SIMD FLOATING POINT\n{:#?}", stack_frame);
+    panic!("EXCEPTION: SIMD FLOATING POINT");
+}
 
 extern "x86-interrupt" fn virtualization_handler(stack_frame: InterruptStackFrame) {
-  println!("EXCEPTION: VIRTUALIZATION HANDLER\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: VIRTUALIZATION\n{:#?}", stack_frame);
+    panic!("EXCEPTION: VIRTUALIZATION");
 }
 
 extern "x86-interrupt" fn cp_protection_exception_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-  println!("EXCEPTION: CP PROTECTION EXCEPTION HANDLER\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: CP PROTECTION\n{:#?}", stack_frame);
+    panic!("EXCEPTION: CP PROTECTION");
 }
 
 extern "x86-interrupt" fn hv_injection_exception_handler(stack_frame: InterruptStackFrame) {
-  println!("EXCEPTION: HV INJECTION EXCEPTION HANDLER\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: HV INJECTION\n{:#?}", stack_frame);
+    panic!("EXCEPTION: HV INJECTION");
 }
-
-//extern "x86-interrupt" fn vmm_communication_exception_handler(stack_frame: InterruptStackFrame) {
- //  println!("EXCEPTION: VMM COMMUNICATION EXCEPTION HANDLER\n{:#?}", stack_frame);
-   //hlt_loop();
-//}
 
 extern "x86-interrupt" fn security_exception_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-  println!("EXCEPTION: SECURITY EXCEPTION HANDLER\n{:#?}", stack_frame);
-  hlt_loop();
+    error!("EXCEPTION: SECURITY\n{:#?}", stack_frame);
+    panic!("EXCEPTION: SECURITY");
+}
+
+/// LAPIC timer interrupt handler.
+/// Increments kernel tick and sends EOI to LAPIC.
+extern "x86-interrupt" fn lapic_timer_handler(_stack_frame: InterruptStackFrame) {
+    tick();
+    send_eoi();
+}
+
+/// Spurious interrupt handler.
+/// Logs and acknowledges the interrupt.
+extern "x86-interrupt" fn spurious_handler(_stack_frame: InterruptStackFrame) {
+    error!("SPURIOUS INTERRUPT");
+    send_eoi();
+}
+
+/// Default handler for unassigned vectors.
+extern "x86-interrupt" fn default_handler(_stack_frame: InterruptStackFrame) {
+    error!("UNHANDLED INTERRUPT");
+}
+
+/// Example custom vector handlers.
+extern "x86-interrupt" fn log_vector_32(_stack_frame: InterruptStackFrame) {
+    error!("UNHANDLED INTERRUPT: vector 32");
+}
+
+extern "x86-interrupt" fn log_vector_33(_stack_frame: InterruptStackFrame) {
+    error!("UNHANDLED INTERRUPT: vector 33");
+}
+
+extern "x86-interrupt" fn unhandled_vector_48(_stack_frame: InterruptStackFrame) {
+    error!("UNHANDLED INTERRUPT: vector 48");
+}
+
+// Example placeholder for vector 49 if needed.
+// extern "x86-interrupt" fn log_vector_49(_stack_frame: InterruptStackFrame) {
+//     error!("UNHANDLED INTERRUPT: vector 49");
+// }
+
+extern "x86-interrupt" fn log_vector_50(_stack_frame: InterruptStackFrame) {
+    error!("UNHANDLED INTERRUPT: vector 50");
+}
+
+extern "x86-interrupt" fn unhandled_vector_255(_stack_frame: InterruptStackFrame) {
+    error!("UNHANDLED INTERRUPT: vector 255");
 }
 
 
-extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
-  print!(".");
-
-  unsafe {
-    PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer.as_u8()); // Timer IRQ is 0
-
-       }
-}
-
-extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
-  use x86_64::instructions::port::Port;
-  let mut port = Port::new(0x60);
-  let _scancode: u8 = unsafe { port.read() }; //Read to ackknoledge
-  crate::task::keyboard::add_scancode(_scancode);
-
-  unsafe {
-      PICS.lock().notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8()); // Keyboard IRQ is 1
-  }
-
-}
 
 
