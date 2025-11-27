@@ -1,9 +1,21 @@
-# 🐾 Bulldog Kernel – APIC Development Branch
+# 🐾 Bulldog Kernel – SYSCALL Development Branch
 
 **Bulldog** is a custom operating system kernel written in Rust, targeting the `x86_64-bulldog` architecture.  
 It’s built from scratch with a focus on safety, reliability, and architectural clarity. This project explores low-level OS concepts such as paging, interrupt handling, privilege switching, and syscall scaffolding.
 
-This branch, **`feature/apic`**, represents the milestone where Bulldog transitions from the legacy PIC8259 interrupt controller to the **Local APIC (LAPIC)** and **I/O APIC** infrastructure.
+This branch focuses on **privilege switching, syscall infrastructure, and user ↔ kernel transitions**.
+
+---
+
+## 🗺️ Bulldog Kernel Branch Roadmap
+
+main                → Latest stable kernel build (currently APIC baseline)
+│
+├── feature/pic8259 → Preserved legacy branch (original PIC8259 interrupt controller)
+│
+├── feature/apic    → APIC milestone (includes paging, LAPIC timer, vector hygiene)
+│
+└── feature/syscall → Active development branch (privilege switching + syscall infrastructure)
 
 ---
 
@@ -62,22 +74,19 @@ Ensure your `Cargo.toml` enables the nightly feature.
 
 ---
 
-## 🖥️ APIC Milestone Overview
+## 🖥️ Syscall Development Overview
 
 This branch introduces:
 
-- LAPIC timer configuration
-  - Periodic mode setup with correct vector hygiene.
-  - End-of-interrupt (EOI) handling validated.
-- Interrupt routing via I/O APIC
-  - Clean mapping of IRQs to vectors.
-  - Mask/unmask logic for selective device interrupts.
-- Logger integration in interrupt handlers
-  - Visible, color-coded output for debugging.
-  - Deadlock-free registration using safe primitives.
-- Health check & watchdog loop
-  - Kernel heartbeat visible via timer ticks.
-  - Contributors can instantly verify kernel liveness.
+- Privilege switching
+  - Ring 0 ↔ Ring 3 transitions via GDT/TSS setup.
+  - Proper stack switching on interrupts/exceptions.
+- Syscall infrastructure
+  - Initial syscall table and dispatcher.
+  - Example syscall (e.g. framebuffer write) for testing.
+- Contributor visibility
+  - Logging of syscall invocations.
+  - Minimal user ↔ kernel test harness.
 
 ---
 
@@ -86,7 +95,6 @@ This branch introduces:
 - [x] Paging and memory management  
 - [x] Interrupt handling and IST setup  
 - [x] GDT/TSS initialization  
-- [x] `loc_api` fix and memory map alignment  
 - [x] APIC interrupt controller integration  
 - [ ] Privilege switching  
 - [ ] Syscall interface  
@@ -99,13 +107,12 @@ This branch introduces:
 
 Bulldog’s development is organized around feature branches that act as benchmarks of the OS’s evolution:
 
-| Branch                     | Purpose / Benchmark Stage |
-|-----------------------------|---------------------------|
-| main                       | Latest integrated kernel (APIC-based) |
-| feature/pic8259            | Legacy PIC interrupt controller solution |
-| feature/apic               | LAPIC/APIC interrupt controller development |
-| feature/privilege-switching| Ring transitions, privilege level switching |
-| feature/syscall-interface  | System call ABI and dispatcher |
+| Branch          | Purpose / Benchmark Stage                        |
+|-----------------|--------------------------------------------------|
+| main            | Latest integrated kernel (APIC-based)            |
+| feature/pic8259 | Legacy PIC interrupt controller solution         |
+| feature/apic    | LAPIC/APIC interrupt controller development      |
+| feature/syscall | Privilege switching + syscall infrastructure     |
 
 Contributors can check out any feature branch to explore Bulldog at that stage.  
 New features should be developed in their own `feature/*` branch, then merged into `main` once complete.
@@ -127,3 +134,4 @@ Coming soon:
 ## 📜 License
 
 MIT or Apache 2.0 — TBD. Contributions welcome under either license.
+

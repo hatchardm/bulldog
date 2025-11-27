@@ -8,10 +8,10 @@ Thanks for your interest in Bulldog! This project is a custom operating system k
 
 Bulldog provides a helper script at `scripts/dev` to streamline common tasks:
 
-./scripts/dev build   # Compile the kernel
-./scripts/dev run     # Launch Bulldog in QEMU
-./scripts/dev test    # Execute kernel tests
-./scripts/dev clean   # Remove build artifacts
+./scripts/dev build   # Compile the kernel  
+./scripts/dev run     # Launch Bulldog in QEMU  
+./scripts/dev test    # Execute kernel tests  
+./scripts/dev clean   # Remove build artifacts  
 
 This script checks prerequisites (Rust nightly, required components, VS Code extensions if applicable) and confirms when your environment is ready.
 
@@ -20,9 +20,9 @@ This script checks prerequisites (Rust nightly, required components, VS Code ext
 ## 📂 Project Hygiene
 
 - **Branching**
-  - Use `main` for stable development.
-  - Create feature branches for experiments or new subsystems.
-  - Prefix branches with `feat/`, `fix/`, or `doc/` for clarity.
+  - `main` holds the latest stable kernel build.
+  - Milestones are preserved in `feature/*` branches (e.g. `feature/pic8259`, `feature/apic`, `feature/syscall`).
+  - For short-lived contributor work, use prefixes: `feat/` for new features, `fix/` for bug fixes, `doc/` for documentation.
 
 - **Commits**
   - Keep commits atomic and descriptive.
@@ -41,6 +41,7 @@ This script checks prerequisites (Rust nightly, required components, VS Code ext
 
 - Run `./scripts/dev test` before submitting a PR.
 - Kernel tests should be deterministic and reproducible.
+- Tests should pass under QEMU; hardware validation is optional but encouraged if APIC support is available.
 - For experimental features, mark tests clearly and isolate them in separate modules.
 
 ---
@@ -58,12 +59,21 @@ This script checks prerequisites (Rust nightly, required components, VS Code ext
 
 Bulldog’s roadmap includes:
 
-- Privilege switching
-- Syscall interface
-- Process scheduling
-- User mode execution
+- Privilege switching → feature/syscall  
+- Syscall interface → feature/syscall  
+- Process scheduling → future feature/scheduler  
+- User mode execution → future feature/user-mode  
 
 When contributing, align your work with these milestones or propose new directions via issues.
+
+---
+
+## ✅ PR Checklist
+
+- [ ] Code builds and runs via `scripts/dev`  
+- [ ] Tests pass under QEMU  
+- [ ] Commit messages follow guidelines  
+- [ ] Documentation updated if needed  
 
 ---
 
@@ -79,21 +89,22 @@ When contributing, align your work with these milestones or propose new directio
 
 Bulldog uses the `log` crate for all runtime output. This ensures consistent severity levels, structured messages, and contributor-friendly debugging. The kernel logger supports runtime log-level filtering (Info, Warn, Error, Debug, Trace) and color-coded framebuffer output.
 
-✅ Use log macros
-- Normal runtime events → `info!`
-- Verbose developer details → `debug!` or `trace!`
-- Unexpected but survivable conditions → `warn!`
-- Fatal faults or unrecoverable errors → `error!`
+✅ Use log macros  
+- Normal runtime events → `info!`  
+- Verbose developer details → `debug!` or `trace!`  
+- Unexpected but survivable conditions → `warn!`  
+- Fatal faults or unrecoverable errors → `error!`  
 
-⚠️ `print!`/`println!` macros
-- Only for early boot stages (before `logger_init()` runs).
-- They bypass the logging system and write directly to the framebuffer.
-- Do not use them for runtime output once the logger is initialized.
+⚠️ `print!`/`println!` macros  
+- Only for early boot stages (before `logger_init()` runs).  
+- They bypass the logging system and write directly to the framebuffer.  
+- Do not use them for runtime output once the logger is initialized.  
 
-🚫 Do not
-- Introduce new `println!` calls in runtime code.
-- Use `println!` as a shortcut for logging — always prefer the appropriate log macro.
+🚫 Do not  
+- Introduce new `println!` calls in runtime code.  
+- Use `println!` as a shortcut for logging — always prefer the appropriate log macro.  
 
 ---
 
 Thanks for helping make Bulldog robust, maintainable, and contributor‑friendly!
+
