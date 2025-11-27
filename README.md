@@ -5,18 +5,6 @@ It’s built from scratch with a focus on safety, reliability, and architectural
 
 This branch, **`feature/apic`**, represents the milestone where Bulldog transitions from the legacy PIC8259 interrupt controller to the **Local APIC (LAPIC)** and **I/O APIC** infrastructure.
 
-Bulldog Kernel Branch Roadmap
-─────────────────────────────
-
-main                → Latest stable kernel build (currently APIC baseline)
-│
-├── feature/pic8259 → Preserved legacy branch (original PIC8259 interrupt controller)
-│
-├── feature/apic    → APIC milestone (includes paging, LAPIC timer, vector hygiene)
-│
-└── feature/syscall → Active development branch (privilege switching + syscall infrastructure)
-
-
 ---
 
 ## 🚀 Getting Started
