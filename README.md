@@ -127,3 +127,13 @@ Coming soon:
 ## 📜 License
 
 MIT or Apache 2.0 — TBD. Contributions welcome under either license.
+
+## Disclaimer
+
+Bulldog and its subsystems (including syscalls, APIC, PIC8259, paging, and related features)  
+are experimental and provided "as is" without warranty of any kind. They are intended for  
+research, learning, and contributor experimentation. Running Bulldog on real hardware may  
+expose quirks or limitations. Use at your own risk. The maintainers and contributors are  
+not liable for any damages or issues arising from its use. By contributing or running Bulldog,  
+you agree to abide by the terms of the project license.
+
