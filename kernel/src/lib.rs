@@ -43,6 +43,8 @@ pub mod time;
 pub mod font;
 pub mod color;
 pub mod logger;
+pub mod syscall;
+pub mod user_sys;
 
 use crate::allocator::ALLOCATOR;
 use crate::apic::{lapic_read, LapicRegister, setup_apic};
@@ -109,6 +111,11 @@ pub fn kernel_init(
     // Core CPU tables
     gdt::init();
     interrupts::init_idt();
+
+     // 🧩 Register syscall handler BEFORE enabling interrupts
+    crate::syscall::init_syscall();
+    info!("Syscall handler ready");
+
 
     // APIC MMIO mapping
     info!("Mapping LAPIC MMIO");

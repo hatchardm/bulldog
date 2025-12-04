@@ -97,6 +97,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         Err(e) => error!("kernel_init failed: {:?}", e),
     }
 
+
+    
+
     info!("Returned to main");
 
     hlt_loop();

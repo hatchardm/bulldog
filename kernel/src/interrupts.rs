@@ -1,13 +1,17 @@
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
-use lazy_static::lazy_static;
 use crate::gdt::{DOUBLE_FAULT_IST_INDEX, LAPIC_IST_INDEX};
 use log::{info, error};
 use crate::apic::send_eoi;
 use core::sync::atomic::{AtomicUsize, AtomicU64};
 use crate::time::tick;
+use x86_64::instructions::interrupts;
+use core::cell::UnsafeCell;
+use crate::syscall::SYSCALL_VECTOR;
 
 /// LAPIC timer interrupt vector.
 pub const LAPIC_TIMER_VECTOR: u8 = 0x31;
+
+
 
 /// Spurious interrupt vector (used to enable LAPIC).
 const SPURIOUS_VECTOR: u8 = 0xFF;
@@ -19,10 +23,29 @@ pub static LAPIC_HITS: AtomicUsize = AtomicUsize::new(0);
 pub static mut LAPIC_RSP: u64 = 0;
 pub static mut LAPIC_HITS_RAW: u64 = 0;
 
-/// Global Interrupt Descriptor Table (IDT).
-lazy_static! {
-    static ref IDT: InterruptDescriptorTable = {
-        let mut idt = InterruptDescriptorTable::new();
+/// A globally allocated IDT with interior mutability and explicit Sync.
+/// We guarantee safe mutation by only writing with interrupts disabled.
+struct IdtCell(UnsafeCell<InterruptDescriptorTable>);
+unsafe impl Sync for IdtCell {}
+
+static IDT: IdtCell = IdtCell(UnsafeCell::new(InterruptDescriptorTable::new()));
+
+#[inline]
+fn idt_ref() -> &'static InterruptDescriptorTable {
+    unsafe { &*IDT.0.get() }
+}
+
+#[inline]
+pub fn idt_mut() -> &'static mut InterruptDescriptorTable {
+    unsafe { &mut *IDT.0.get() }
+}
+
+/// Initialize and load the IDT.
+/// Logs handler addresses for selected vectors.
+pub fn init_idt() {
+    // Mutate the global IDT in a safe window with interrupts disabled.
+    interrupts::without_interrupts(|| {
+        let idt = idt_mut();
 
         // Core exceptions
         idt.divide_error.set_handler_fn(divide_error_handler);
@@ -80,6 +103,7 @@ lazy_static! {
                 || (21..=27).contains(&i)
                 || (29..=31).contains(&i)
                 || i == LAPIC_TIMER_VECTOR as usize;
+                || i == SYSCALL_VECTOR as usize; // <-- skip syscall vector
 
             if skip || idt[i].handler_addr().as_u64() != 0 {
                 continue;
@@ -90,23 +114,21 @@ lazy_static! {
             }
         }
 
-        idt
-    };
+        // Log selected vectors after registration
+        for i in 48..=50 {
+            let addr = idt[i].handler_addr().as_u64();
+            if addr == 0 {
+                error!("IDT[{}] is NOT set", i);
+            } else {
+                info!("IDT[{}] handler address: {:#x}", i, addr);
+            }
+        }
+
+        // Load the IDT (executes lidt) on the 'static reference
+        unsafe { idt_ref().load(); }
+    });
 }
 
-/// Initialize and load the IDT.
-/// Logs handler addresses for selected vectors.
-pub fn init_idt() {
-    for i in 48..=50 {
-        let addr = IDT[i].handler_addr().as_u64();
-        if addr == 0 {
-            error!("IDT[{}] is NOT set", i);
-        } else {
-            info!("IDT[{}] handler address: {:#x}", i, addr);
-        }
-    }
-    IDT.load();
-}
 
 // === Exception Handlers ===
 
