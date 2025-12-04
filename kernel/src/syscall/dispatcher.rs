@@ -1,8 +1,11 @@
-use log::{info, warn};
+// File: kernel/src/syscall/dispatcher.rs
+
+use log::{info};
 use x86_64::structures::idt::InterruptStackFrame;
 use core::arch::asm;
 
-use crate::syscall::stubs::{SYS_WRITE, SYS_EXIT, sys_write, sys_exit};
+use crate::syscall::stubs::SyscallFn;
+use crate::syscall::table::{lookup, unknown};
 
 pub const SYSCALL_VECTOR: u8 = 0x80;
 
@@ -43,15 +46,14 @@ pub fn init_syscall() {
     info!("Syscall handler initialized at vector {:#x}", SYSCALL_VECTOR);
 }
 
-/// Dispatcher
+/// Table-driven dispatcher
 pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64) -> u64 {
-    match num {
-        SYS_WRITE => sys_write(arg0, arg1, arg2),
-        SYS_EXIT  => sys_exit(arg0),
-        _ => {
-            warn!("Unknown syscall {}", num);
-            u64::MAX
+    match lookup(num) {
+        Some(fun) => {
+            // fn(u64,u64,u64)->u64
+            fun(arg0, arg1, arg2)
         }
+        None => unknown(num),
     }
 }
 
@@ -60,3 +62,4 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64) -> u64 {
 pub unsafe fn syscall_entry() {
     asm!("int 0x80", options(nostack, nomem));
 }
+
