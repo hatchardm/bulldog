@@ -2,11 +2,11 @@
 //! Static syscall table with function pointer lookup
 
 use log::warn;
-use super::stubs::{SyscallFn, SYS_WRITE, SYS_EXIT, sys_write, sys_exit};
+use super::stubs::{SyscallFn, SYS_WRITE, SYS_OPEN, SYS_EXIT, sys_write, sys_exit, sys_open};    
 
 /// Size should cover the highest syscall ID you plan to expose.
 /// You can grow this later or compute from a const.
-pub const SYSCALL_TABLE_SIZE: usize = 64;
+pub const SYSCALL_TABLE_SIZE: usize = 64; 
 
 /// Initialize the syscall table at compile time.
 /// Each slot is an Option<SyscallFn>, indexed by syscall number.
@@ -14,6 +14,7 @@ const fn init_table() -> [Option<SyscallFn>; SYSCALL_TABLE_SIZE] {
     let mut t: [Option<SyscallFn>; SYSCALL_TABLE_SIZE] = [None; SYSCALL_TABLE_SIZE];
     t[SYS_WRITE as usize] = Some(sys_write);
     t[SYS_EXIT  as usize] = Some(sys_exit);
+    t[SYS_OPEN  as usize] = Some(sys_open);
     t
 }
 
@@ -35,7 +36,7 @@ pub fn lookup(num: u64) -> Option<SyscallFn> {
 /// Central unknown handler so dispatcher stays tidy.
 #[inline]
 pub fn unknown(num: u64) -> u64 {
-    warn!("Unknown syscall {}", num);
-    u64::MAX
+    log::warn!("invalid syscall num={} invoked", num);
+    u64::MAX // error code
 }
 

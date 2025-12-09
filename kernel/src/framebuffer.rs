@@ -45,13 +45,14 @@ impl KernelFramebuffer {
 
     /// Pack RGB values into a 32‑bit pixel according to format.
     /// Supports RGB and BGR layouts; defaults to RGB otherwise.
-    pub fn pack_color(&self, r: u8, g: u8, b: u8) -> u32 {
-        match self.pixel_format {
-            PixelFormat::Rgb => ((r as u32) << 16) | ((g as u32) << 8) | (b as u32),
-            PixelFormat::Bgr => ((b as u32) << 16) | ((g as u32) << 8) | (r as u32),
-            _ => ((r as u32) << 16) | ((g as u32) << 8) | (b as u32),
-        }
+   pub fn pack_color(&self, r: u8, g: u8, b: u8) -> u32 {
+    match self.pixel_format {
+        PixelFormat::Rgb => (0xFF << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32),
+        PixelFormat::Bgr => (0xFF << 24) | ((b as u32) << 16) | ((g as u32) << 8) | (r as u32),
+        _ => (0xFF << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32),
     }
+}
+
 
     /// Clear the entire framebuffer with a solid color.
     /// Uses volatile writes to ensure memory‑mapped I/O is respected.

@@ -46,6 +46,9 @@ pub mod logger;
 pub mod syscall;
 pub mod user_sys;
 
+#[cfg(feature = "syscall_tests")]
+mod tests;
+
 use crate::allocator::ALLOCATOR;
 use crate::apic::{lapic_read, LapicRegister, setup_apic};
 use crate::memory::{BootInfoFrameAllocator, PreHeapAllocator, init_offset_page_table, map_lapic_mmio};
@@ -115,6 +118,11 @@ pub fn kernel_init(
      // 🧩 Register syscall handler BEFORE enabling interrupts
     crate::syscall::init_syscall();
     info!("Syscall handler ready");
+
+
+   #[cfg(feature = "syscall_tests")]
+   tests::syscall_harness::run_syscall_tests();
+
 
 
     // APIC MMIO mapping
@@ -217,6 +225,9 @@ pub fn hlt_loop() -> ! {
     loop {
         unsafe { core::arch::asm!("hlt"); }
         wd.check();
+
+        // Only run health checks if not in syscall_tests mode
+        #[cfg(not(feature = "syscall_tests"))]
         crate::time::health_check(1000);
     }
 }

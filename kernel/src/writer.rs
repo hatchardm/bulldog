@@ -60,8 +60,47 @@ impl TextWriter {
 
     /// Write a single character to the framebuffer.
     /// Handles newline, scrolling, and glyph rendering.
-    pub fn write_char(&mut self, c: char) {
-        if c == '\n' {
+   pub fn write_char(&mut self, c: char) {
+    if c == '\n' {
+        self.cursor_x = 0;
+        self.cursor_y += self.line_height;
+        if self.cursor_y + self.line_height >= self.height {
+            if self.enable_scroll {
+                scroll_up(
+                    self.framebuffer,
+                    self.stride_pixels,
+                    self.height,
+                    self.line_height,
+                    self.bg_color,
+                );
+                self.cursor_y = self.height - self.line_height;
+            } else {
+                self.cursor_y = self.height - self.line_height;
+            }
+        }
+        return;
+    }
+
+    if let Some(glyph) = get_glyph(c) {
+        draw_glyph(
+            &glyph,
+            self.fg_color,
+            self.bg_color,
+            self.framebuffer,
+            self.stride_pixels,
+            self.height,
+            self.cursor_x,
+            self.cursor_y,
+        );
+
+        // spacing tweak: give digits extra breathing room
+        if c.is_ascii_digit() {
+            self.cursor_x += glyph.width() + 2;
+        } else {
+            self.cursor_x += glyph.width() + 1;
+        }
+
+        if self.cursor_x + glyph.width() >= self.width {
             self.cursor_x = 0;
             self.cursor_y += self.line_height;
             if self.cursor_y + self.line_height >= self.height {
@@ -78,42 +117,10 @@ impl TextWriter {
                     self.cursor_y = self.height - self.line_height;
                 }
             }
-            return;
-        }
-
-        if let Some(glyph) = get_glyph(c) {
-            draw_glyph(
-                &glyph,
-                self.fg_color,
-                self.bg_color,
-                self.framebuffer,
-                self.stride_pixels,
-                self.height,
-                self.cursor_x,
-                self.cursor_y,
-            );
-
-            self.cursor_x += glyph.width() + 1;
-            if self.cursor_x + glyph.width() >= self.width {
-                self.cursor_x = 0;
-                self.cursor_y += self.line_height;
-                if self.cursor_y + self.line_height >= self.height {
-                    if self.enable_scroll {
-                        scroll_up(
-                            self.framebuffer,
-                            self.stride_pixels,
-                            self.height,
-                            self.line_height,
-                            self.bg_color,
-                        );
-                        self.cursor_y = self.height - self.line_height;
-                    } else {
-                        self.cursor_y = self.height - self.line_height;
-                    }
-                }
-            }
         }
     }
+}
+
 
     /// Set foreground and background colors.
     pub fn set_color(&mut self, fg: (u8, u8, u8), bg: (u8, u8, u8)) {
@@ -211,8 +218,16 @@ pub fn draw_glyph(
     x: usize,
     y: usize,
 ) {
-    let fg_color = ((fg.0 as u32) << 16) | ((fg.1 as u32) << 8) | (fg.2 as u32);
-    let bg_color = ((bg.0 as u32) << 16) | ((bg.1 as u32) << 8) | (bg.2 as u32);
+    let fg_color = (0xFF << 24)
+             | ((fg.0 as u32) << 16)
+             | ((fg.1 as u32) << 8)
+             | (fg.2 as u32);
+
+    let bg_color = (0xFF << 24)
+             | ((bg.0 as u32) << 16)
+             | ((bg.1 as u32) << 8)
+             | (bg.2 as u32);
+
 
     let glyph_width = glyph.width();
     let glyph_height = glyph.height();

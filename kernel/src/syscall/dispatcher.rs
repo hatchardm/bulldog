@@ -1,65 +1,72 @@
 // File: kernel/src/syscall/dispatcher.rs
 
-use log::{info};
+use log::info;
 use x86_64::structures::idt::InterruptStackFrame;
-use core::arch::asm;
-
-use crate::syscall::stubs::SyscallFn;
+use x86_64::PrivilegeLevel;
 use crate::syscall::table::{lookup, unknown};
+use core::arch::naked_asm;
 
 pub const SYSCALL_VECTOR: u8 = 0x80;
 
-/// Kernel-side syscall handler.
-pub extern "x86-interrupt" fn syscall_handler(_stack_frame: InterruptStackFrame) {
-    let (num, a0, a1, a2): (u64, u64, u64, u64);
+#[unsafe(naked)]
+pub extern "C" fn syscall_handler() {
     unsafe {
-        asm!(
-            "mov {num}, rax",
-            "mov {a0}, rdi",
-            "mov {a1}, rsi",
-            "mov {a2}, rdx",
-            num = lateout(reg) num,
-            a0  = lateout(reg) a0,
-            a1  = lateout(reg) a1,
-            a2  = lateout(reg) a2,
-            options(nostack, preserves_flags)
+        naked_asm!(
+            r#"
+            push rbx
+            push rbp
+            push r12
+            push r13
+
+            mov rbx, rax
+            mov rbp, rdi
+            mov r12, rsi
+            mov r13, rdx
+
+            mov rdi, rbx
+            mov rsi, rbp
+            mov rdx, r12
+            mov rcx, r13
+
+            call rust_dispatch
+
+            pop r13
+            pop r12
+            pop rbp
+            pop rbx
+
+            iretq
+            "#
         );
     }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn rust_dispatch(num: u64, a0: u64, a1: u64, a2: u64) -> u64 {
+    #[cfg(feature = "syscall_tests")]
+    info!("dispatch called with num={} a0={:#x} a1={:#x} a2={:#x}", num, a0 as usize, a1 as usize, a2 as usize);
 
     let ret = dispatch(num, a0, a1, a2);
-
-    unsafe {
-        asm!(
-            "mov rax, {ret}",
-            ret = in(reg) ret,
-            options(nostack, preserves_flags)
-        );
-    }
-
     info!("syscall num={} ret={}", num, ret);
+    ret
 }
 
-/// Initialization hook
-pub fn init_syscall() {
-    let mut idt = crate::interrupts::idt_mut();
-    idt[SYSCALL_VECTOR as usize].set_handler_fn(syscall_handler);
-    info!("Syscall handler initialized at vector {:#x}", SYSCALL_VECTOR);
-}
-
-/// Table-driven dispatcher
 pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64) -> u64 {
     match lookup(num) {
-        Some(fun) => {
-            // fn(u64,u64,u64)->u64
-            fun(arg0, arg1, arg2)
-        }
+        Some(fun) => fun(arg0, arg1, arg2),
         None => unknown(num),
     }
 }
 
-/// User-side entry trigger
-#[inline(always)]
-pub unsafe fn syscall_entry() {
-    asm!("int 0x80", options(nostack, nomem));
+pub fn init_syscall() {
+    let mut idt = crate::interrupts::idt_mut();
+    unsafe {
+        idt[SYSCALL_VECTOR as usize]
+            .set_handler_fn(core::mem::transmute::<extern "C" fn(), extern "x86-interrupt" fn(InterruptStackFrame)>(syscall_handler))
+            .set_privilege_level(PrivilegeLevel::Ring3);
+    }
+    info!("Syscall handler initialized at vector {:#x} (DPL=3)", SYSCALL_VECTOR);
 }
+
+
 

@@ -15,6 +15,11 @@ fn main() {
     info!("Triggering sys_exit...");
     let _ = user_sys::exit(0);
     info!("Returned from sys_exit.");
+
+    info!("Triggering sys_open...");
+    let fd = user_sys::open(0x1234, 0);
+    info!("sys_open returned {}", fd);
+
 }
 
 #[panic_handler]

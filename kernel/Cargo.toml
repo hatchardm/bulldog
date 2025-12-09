@@ -35,3 +35,10 @@ map-physical-memory = true   # ✅ Required for dynamic memory mapping
 
 [package.metadata.bootloader]
 linker-script = "layout.ld"  # ✅ Ensures bootloader uses your custom linker
+
+[features]
+default = []
+syscall_tests = []
+
+
+

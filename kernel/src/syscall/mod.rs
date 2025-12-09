@@ -11,8 +11,8 @@ pub use dispatcher::{
     init_syscall,
     syscall_handler,
     dispatch,
-    syscall_entry,
     SYSCALL_VECTOR,
 };
 
-pub use stubs::{SYS_WRITE, SYS_EXIT};
+pub use stubs::{SYS_WRITE, SYS_EXIT, SYS_OPEN};
+

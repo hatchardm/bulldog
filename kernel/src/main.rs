@@ -75,6 +75,18 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         let _ = writeln!(w, "🐾 Bulldog Kernel Booting...");
     }
 
+    if let Some(w) = WRITER.lock().as_mut() {
+    #[cfg(feature = "syscall")]
+    let _ = writeln!(w, "[feature] syscall ENABLED");
+    #[cfg(not(feature = "syscall"))]
+    let _ = writeln!(w, "[feature] syscall DISABLED");
+
+    #[cfg(feature = "syscall_tests")]
+    let _ = writeln!(w, "[feature] syscall_tests ENABLED");
+    #[cfg(not(feature = "syscall_tests"))]
+    let _ = writeln!(w, "[feature] syscall_tests DISABLED");
+}
+
     // 🪵 Logging
     logger_init(LevelFilter::Info);
     info!("Exited logger_init");

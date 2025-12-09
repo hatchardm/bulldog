@@ -5,7 +5,8 @@ edition = "2024"
 
 [build-dependencies]
 bootloader = "0.11.12"
-kernel = { path = "kernel", artifact = "bin", target = "x86_64-unknown-none" }
+kernel = { path = "kernel", artifact = "bin", target = "x86_64-unknown-none"}
+
 
 [dependencies]
 # used for UEFI booting in QEMU
@@ -16,4 +17,9 @@ members = ["kernel"]
 
 [profile.dev]
 debug = true
+
+[features]
+default = []
+syscall_tests = ["kernel/syscall_tests"]
+
 
