@@ -3,6 +3,7 @@
 //! instead of faulting when given bogus addresses.
 
 use log::{info, error};
+use crate::syscall::errno::{err, EFAULT};
 
 /// Syscall numbers used by the dispatcher and userland shims.
 pub const SYS_WRITE: u64 = 1;
@@ -11,10 +12,6 @@ pub const SYS_OPEN:  u64 = 3;
 
 /// Uniform type for syscall functions in the table.
 pub type SyscallFn = fn(u64, u64, u64) -> u64;
-
-/// Return placeholder for -EFAULT (until errno is normalized).
-#[inline(always)]
-fn err_fault() -> u64 { core::u64::MAX }
 
 /// Minimal user-pointer guard: accept only canonical, lower-half addresses.
 #[inline(always)]
@@ -62,7 +59,7 @@ pub fn sys_write(fd: u64, buf_ptr: u64, len: u64) -> u64 {
         }
         Err(_) => {
             error!("[WRITE] invalid user buffer {:#x}", buf_ptr);
-            err_fault()
+            err(EFAULT)
         }
     }
 }
@@ -83,7 +80,7 @@ pub fn sys_open(path_ptr: u64, flags: u64, _unused: u64) -> u64 {
         }
         Err(_) => {
             error!("[OPEN] invalid user path ptr {:#x}", path_ptr);
-            err_fault()
+            err(EFAULT)
         }
     }
 }

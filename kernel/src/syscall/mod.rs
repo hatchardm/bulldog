@@ -6,6 +6,7 @@
 pub mod dispatcher;
 pub mod stubs;
 pub mod table;
+pub mod errno;
 
 pub use dispatcher::{
     init_syscall,

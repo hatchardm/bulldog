@@ -4,6 +4,7 @@
 
 use crate::syscall::{SYS_WRITE, SYS_EXIT, SYS_OPEN};
 use log::info;
+use crate::syscall::errno::{err, EFAULT};
 
 /// Inline assembly wrapper to trigger a syscall with up to 3 args.
 /// Note: arg2 is u32 so it binds cleanly into edx.
@@ -34,7 +35,7 @@ pub fn run_syscall_tests() {
     let bogus_ptr: u64 = 0xFFFF_FFFF_FFFF_FFFF;
     let ret = unsafe { syscall(SYS_WRITE, 1, bogus_ptr, 8) };
     info!("[HARNESS] sys_write bogus ptr returned: {}", ret);
-    assert_eq!(ret, u64::MAX);
+    assert_eq!(ret, err(EFAULT));
 
     // --- sys_open happy path ---
     let path = b"foo.txt\0";
@@ -47,7 +48,7 @@ pub fn run_syscall_tests() {
    let bogus_ptr: u64 = 0xFFFF_FFFF_FFFF_FFFF; // non-canonical sentinel
    let fd = unsafe { syscall(SYS_OPEN, bogus_ptr, 0, 0) };
    info!("[HARNESS] sys_open bogus ptr returned fd: {}", fd);
-   assert_eq!(fd, u64::MAX);
+   assert_eq!(fd, err(EFAULT));
 
 
     // --- sys_exit ---
