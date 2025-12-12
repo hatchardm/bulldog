@@ -4,7 +4,7 @@
 
 use crate::syscall::{SYS_WRITE, SYS_EXIT, SYS_OPEN};
 use log::info;
-use crate::syscall::errno::{err, EFAULT};
+use crate::syscall::errno::{err, errno};
 
 /// Inline assembly wrapper to trigger a syscall with up to 3 args.
 /// Note: arg2 is u32 so it binds cleanly into edx.
@@ -35,27 +35,37 @@ pub fn run_syscall_tests() {
     let bogus_ptr: u64 = 0xFFFF_FFFF_FFFF_FFFF;
     let ret = unsafe { syscall(SYS_WRITE, 1, bogus_ptr, 8) };
     info!("[HARNESS] sys_write bogus ptr returned: {}", ret);
-    assert_eq!(ret, err(EFAULT));
+    assert_eq!(ret, err(errno::EFAULT));
+
+    // --- sys_write invalid fd (error path) ---
+    let msg = b"Hello\0";
+    let ret = unsafe { syscall(SYS_WRITE, 0, msg.as_ptr() as u64, msg.len() as u32) };
+    info!("[HARNESS] sys_write invalid fd returned: {}", ret);
+    assert_eq!(ret, err(errno::EBADF));
 
     // --- sys_open happy path ---
     let path = b"foo.txt\0";
     let fd = unsafe { syscall(SYS_OPEN, path.as_ptr() as u64, 0, 0) };
     info!("[HARNESS] sys_open returned fd: {}", fd);
-    assert_eq!(fd, 42);
+    assert!(fd >= 3);
 
-   // --- sys_open bogus pointer (error path) ---
-   // Use a clearly invalid pointer that the guard rejects.
-   let bogus_ptr: u64 = 0xFFFF_FFFF_FFFF_FFFF; // non-canonical sentinel
-   let fd = unsafe { syscall(SYS_OPEN, bogus_ptr, 0, 0) };
-   info!("[HARNESS] sys_open bogus ptr returned fd: {}", fd);
-   assert_eq!(fd, err(EFAULT));
-
+    // --- sys_open bogus pointer (error path) ---
+    let bogus_ptr: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+    let fd = unsafe { syscall(SYS_OPEN, bogus_ptr, 0, 0) };
+    info!("[HARNESS] sys_open bogus ptr returned fd: {}", fd);
+    assert_eq!(fd, err(errno::EFAULT));
 
     // --- sys_exit ---
     let code = unsafe { syscall(SYS_EXIT, 123, 0, 0) };
     info!("[HARNESS] sys_exit returned: {}", code);
     assert_eq!(code, 0);
+
+    // --- unknown syscall (error path) ---
+    let ret = unsafe { syscall(999, 0, 0, 0) };
+    info!("[HARNESS] unknown syscall returned: {}", ret);
+    assert_eq!(ret, err(errno::ENOSYS));
 }
+
 
 
 

@@ -8,6 +8,11 @@ pub mod stubs;
 pub mod table;
 pub mod errno;
 
+// New dedicated syscall modules
+pub mod write;
+pub mod exit;
+pub mod open;   
+
 pub use dispatcher::{
     init_syscall,
     syscall_handler,
@@ -16,4 +21,7 @@ pub use dispatcher::{
 };
 
 pub use stubs::{SYS_WRITE, SYS_EXIT, SYS_OPEN};
+pub use write::sys_write;
+pub use exit::sys_exit;
+pub use open::sys_open;
 
