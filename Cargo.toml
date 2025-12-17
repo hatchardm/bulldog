@@ -21,5 +21,5 @@ debug = true
 [features]
 default = []
 syscall_tests = ["kernel/syscall_tests"]
-
+serial_log     = ["kernel/serial_log"]
 

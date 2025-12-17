@@ -32,6 +32,8 @@ use kernel::{
     kernel_init,
 };
 use kernel::time;
+use kernel::serial::serial_print;
+use kernel::logger::set_framebuffer_ready;
 use core::fmt::Write;
 use log::{info, error};
 use log::LevelFilter;
@@ -67,6 +69,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     // ✍️ Initialize WRITER
     writer::framebuffer_init(&mut fb);
+    set_framebuffer_ready(true);
+
 
     // 🐾 Boot banner
     if let Some(w) = WRITER.lock().as_mut() {
@@ -91,6 +95,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     logger_init(LevelFilter::Info);
     info!("Exited logger_init");
     info!("Framebuffer format: {:?}, size: {}x{}", fb.pixel_format, fb.width, fb.height);
+    
 
     // 🔠 Glyph diagnostics
     if let Some(glyph) = get_glyph('A') {
@@ -134,20 +139,6 @@ fn panic(info: &PanicInfo) -> ! {
     hlt_loop();
 }
 
-/// Write a single byte to COM1 serial port (0x3F8).
-fn serial_write_byte(byte: u8) {
-    unsafe {
-        let mut port = Port::new(0x3F8);
-        port.write(byte);
-    }
-}
-
-/// Print a string to COM1 serial port.
-fn serial_print(s: &str) {
-    for byte in s.bytes() {
-        serial_write_byte(byte);
-    }
-}
 
 
 

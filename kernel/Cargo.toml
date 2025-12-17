@@ -39,6 +39,5 @@ linker-script = "layout.ld"  # ✅ Ensures bootloader uses your custom linker
 [features]
 default = []
 syscall_tests = []
-
-
+serial_log = []
 

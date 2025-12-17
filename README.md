@@ -9,6 +9,7 @@ This branch focuses on **privilege switching, syscall infrastructure, and user �
 
 ## 🗺️ Bulldog Kernel Branch Roadmap
 
+```
 main                → Latest stable kernel build (currently APIC baseline)
 │
 ├── feature/pic8259 → Preserved legacy branch (original PIC8259 interrupt controller)
@@ -16,6 +17,7 @@ main                → Latest stable kernel build (currently APIC baseline)
 ├── feature/apic    → APIC milestone (includes paging, LAPIC timer, vector hygiene)
 │
 └── feature/syscall → Active development branch (privilege switching + syscall infrastructure)
+```
 
 ---
 
@@ -31,7 +33,9 @@ To build Bulldog, you’ll need:
 
 Install the required Rust component:
 
+```bash
 rustup component add llvm-tools-preview
+```
 
 ---
 
@@ -39,20 +43,26 @@ rustup component add llvm-tools-preview
 
 Clone the repo:
 
+```bash
 git clone https://github.com/hatchardm/bulldog.git
 cd bulldog
+```
 
 Build the kernel:
 
+```bash
 cargo build -Z bindeps
+```
 
 Run in QEMU:
 
+```bash
 qemu-system-x86_64 \
   -kernel target/x86_64-bulldog/debug/bulldog \
   -serial stdio \
   -smp 2 \
   -enable-kvm
+```
 
 ---
 
@@ -61,11 +71,15 @@ qemu-system-x86_64 \
 ### 🔧 `loc_api` Nightly Feature Fix
 If you're using the nightly Rust toolchain and encounter a build error in `loc_api` related to the deprecated `const_fn` feature:
 
+```rust
 #![cfg_attr(feature = "nightly", feature(const_fn))]
+```
 
 Replace it with:
 
+```rust
 #![cfg_attr(feature = "nightly", feature(const_fn_trait_bound))]
+```
 
 📍 Apply this fix at **line 91 of `loc_api/lib.rs`**.  
 It resolves build errors on newer nightly Rust versions where `const_fn` has been removed in favor of `const_fn_trait_bound`.
@@ -78,15 +92,28 @@ Ensure your `Cargo.toml` enables the nightly feature.
 
 This branch introduces:
 
-- Privilege switching
+- **Privilege switching**
   - Ring 0 ↔ Ring 3 transitions via GDT/TSS setup.
   - Proper stack switching on interrupts/exceptions.
-- Syscall infrastructure
+- **Syscall infrastructure**
   - Initial syscall table and dispatcher.
   - Example syscall (e.g. framebuffer write) for testing.
-- Contributor visibility
+- **Contributor visibility**
   - Logging of syscall invocations.
   - Minimal user ↔ kernel test harness.
+
+---
+
+## 📊 Current Syscalls
+
+| Number | Name       | Status        | Notes                          |
+|--------|------------|---------------|--------------------------------|
+| 1      | sys_write  | Implemented   | Writes buffer to fd            |
+| 2      | sys_exit   | Implemented   | Terminates process             |
+| 3      | sys_open   | Implemented   | Opens file descriptor          |
+| 4      | sys_read   | Stub example  | Reads buffer (to be implemented) |
+
+➡️ See `docs/syscall-table.md` for details on adding new syscalls.
 
 ---
 
@@ -124,6 +151,14 @@ New features should be developed in their own `feature/*` branch, then merged in
 Bulldog is designed with open-source collaboration in mind.  
 If you're interested in kernel development, Rust internals, or low-level architecture, we’d love your input.
 
+### Contributor Workflow
+- Keep commits atomic and descriptive.  
+- Document unsafe blocks with justification.  
+- Test under QEMU before submitting PRs.  
+- Align contributions with roadmap milestones.  
+- Ensure all syscalls log entry, arguments, and return values for hygiene.  
+- Update `docs/syscall.md` and `docs/syscall-table.md` when adding new syscalls.  
+
 Coming soon:
 - Expanded documentation  
 - Contributor guidelines  
@@ -135,6 +170,8 @@ Coming soon:
 
 MIT or Apache 2.0 — TBD. Contributions welcome under either license.
 
+---
+
 ## Disclaimer
 
 Bulldog and its subsystems (including syscalls, APIC, PIC8259, paging, and related features)  
@@ -143,6 +180,7 @@ research, learning, and contributor experimentation. Running Bulldog on real har
 expose quirks or limitations. Use at your own risk. The maintainers and contributors are  
 not liable for any damages or issues arising from its use. By contributing or running Bulldog,  
 you agree to abide by the terms of the project license.
+
 
 
 

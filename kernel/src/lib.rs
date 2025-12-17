@@ -45,6 +45,7 @@ pub mod color;
 pub mod logger;
 pub mod syscall;
 pub mod user_sys;
+pub mod serial;
 
 #[cfg(feature = "syscall_tests")]
 mod tests;
@@ -70,8 +71,8 @@ pub fn kernel_init(
     use crate::{gdt, interrupts, memory, stack};
 
     disable_pic();
-
-    info!("Creating mapper");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Creating mapper");}
     let mut mapper = unsafe { init_offset_page_table(phys_mem_offset) };
 
     // Log memory regions directly
@@ -82,7 +83,8 @@ pub fn kernel_init(
         );
     }
 
-    info!("Creating pre-heap frame allocator");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Creating pre-heap frame allocator");}
     let (temp_frames, memory_map) = unsafe { BootInfoFrameAllocator::init_temp(memory_regions) };
 
     let mut temp_allocator = PreHeapAllocator {
@@ -91,14 +93,19 @@ pub fn kernel_init(
         next: 0,
     };
 
-    info!("Initializing heap");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Initializing heap");}
     allocator::init_heap(&mut mapper, &mut temp_allocator).expect("Heap initialization failed");
-    info!("Heap initialized");
+    #[cfg(not(feature = "syscall_tests"))]
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Heap initialized");}
 
-    info!("Finalizing frame allocator from temp allocator");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Finalizing frame allocator from temp allocator");}
     let frames = temp_allocator.into_vec();
     let mut frame_allocator = BootInfoFrameAllocator::new(memory_map, frames);
-    info!("Frame allocator ready");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Frame allocator ready");}
 
     // Optional: identity-map framebuffer region here if needed
 
@@ -117,7 +124,8 @@ pub fn kernel_init(
 
      // 🧩 Register syscall handler BEFORE enabling interrupts
     crate::syscall::init_syscall();
-    info!("Syscall handler ready");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Syscall handler ready");}
 
 
    #[cfg(feature = "syscall_tests")]
@@ -126,11 +134,13 @@ pub fn kernel_init(
 
 
     // APIC MMIO mapping
-    info!("Mapping LAPIC MMIO");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Mapping LAPIC MMIO");}
     map_lapic_mmio(&mut mapper, &mut frame_allocator);
 
     // APIC IST stack mapping
-    info!("Mapping LAPIC IST stack");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Mapping LAPIC IST stack");}
     let lapic_stack_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(stack::LAPIC_STACK.0) });
     let lapic_stack_end = lapic_stack_start + gdt::STACK_SIZE;
     let lapic_stack_range = Page::range_inclusive(
@@ -144,7 +154,8 @@ pub fn kernel_init(
         debug!("Used frame: {:#x}", frame.start_address().as_u64());
     }
 
-    info!("Pre-mark LAPIC stack frames");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Pre-mark LAPIC stack frames");}
     for page in lapic_stack_range.clone() {
         if let Some(phys) = mapper.translate_addr(page.start_address()) {
             let frame = PhysFrame::containing_address(phys);
@@ -183,11 +194,14 @@ pub fn kernel_init(
     setup_apic();
 
     let count = lapic_read(LapicRegister::CURRENT_COUNT);
-    info!("LAPIC CURRENT COUNT: {}", count);
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("LAPIC CURRENT COUNT: {}", count);}
 
-    info!("Enabling interrupts");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Enabling interrupts");}
     x86_64::instructions::interrupts::enable();
-    info!("Exiting init");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Exiting init");}
 
     Ok(())
 }

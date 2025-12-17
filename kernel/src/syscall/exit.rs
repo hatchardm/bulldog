@@ -1,6 +1,6 @@
 // File: kernel/src/syscall/exit.rs
-//! Minimal sys_exit implementation for Bulldog kernel.
-//! Logs the exit code and returns success.
+//! Expanded sys_exit implementation for Bulldog kernel.
+//! Logs the exit code and always returns success (stub).
 
 use log::info;
 
@@ -12,3 +12,5 @@ pub fn sys_exit(code: u64, _unused1: u64, _unused2: u64) -> u64 {
     info!("[EXIT] process exited with code {}", code);
     0
 }
+
+

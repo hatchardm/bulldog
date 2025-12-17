@@ -181,7 +181,8 @@ unsafe impl FrameAllocator<Size4KiB> for PreHeapAllocator {
 
 impl BootInfoFrameAllocator {
     pub fn new(memory_map: &'static [MemoryRegion], frames: Vec<PhysFrame>) -> Self {
-    info!("Entered BootInfoFrameAllocator::new");
+        #[cfg(not(feature = "syscall_tests"))]
+    {info!("Entered BootInfoFrameAllocator::new");}
 
         BootInfoFrameAllocator {
             memory_map,
@@ -227,7 +228,8 @@ impl BootInfoFrameAllocator {
     pub unsafe fn init_temp(
         memory_map: &'static [MemoryRegion],
     ) -> ([Option<PhysFrame>; 512], &'static [MemoryRegion]) {
-        info!("Entered BootInfoFrameAllocator::init_temp");
+        #[cfg(not(feature = "syscall_tests"))]
+        {info!("Entered BootInfoFrameAllocator::init_temp");}
         debug!("BootInfoFrameAllocator::init_temp: memory_map.len = {}", memory_map.len());
 
         // Debug: log memory regions
@@ -269,11 +271,13 @@ impl BootInfoFrameAllocator {
 impl BootInfoFrameAllocator {
     /// Mark non‑usable frames as allocated in the bitmap.
     pub fn mark_used_frames(&mut self) {
-        info!("Starting mark_used_frames()");
+        #[cfg(not(feature = "syscall_tests"))]
+        {info!("Starting mark_used_frames()");}
 
         for region in self.memory_map.iter() {
             if region.start >= region.end {
-                info!("Skipping invalid region: start={:#x}, end={:#x}", region.start, region.end);
+                #[cfg(not(feature = "syscall_tests"))]
+                {info!("Skipping invalid region: start={:#x}, end={:#x}", region.start, region.end);}
                 continue;
             }
 
@@ -304,7 +308,8 @@ impl BootInfoFrameAllocator {
     /// # Safety
     /// Must only be called once heap is ready.
     pub unsafe fn init(memory_map: &'static [MemoryRegion]) -> Self {
-        info!("Entered BootInfoFrameAllocator::init");
+        #[cfg(not(feature = "syscall_tests"))]
+        {info!("Entered BootInfoFrameAllocator::init");}
         debug!("memory_map.len = {}", memory_map.len());
 
         let mut frames = Vec::new();
@@ -349,7 +354,8 @@ pub fn map_lapic_mmio(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
 ) {
-    info!("Mapping LAPIC MMIO region...");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Mapping LAPIC MMIO region...");}
 
     let virt = VirtAddr::new(crate::apic::LAPIC_VIRT_BASE);
     let phys = PhysAddr::new(0xFEE00000);
@@ -364,7 +370,8 @@ pub fn map_lapic_mmio(
     }
 
     debug!("Mapped LAPIC page at {:#x}", virt.as_u64());
-    info!("LAPIC MMIO fully mapped");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("LAPIC MMIO fully mapped");}
 }
 
 /// Map a single page to a physical frame with the given flags.
