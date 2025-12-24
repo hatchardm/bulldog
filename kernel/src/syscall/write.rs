@@ -1,63 +1,97 @@
 // File: kernel/src/syscall/write.rs
-//! Expanded sys_write implementation for Bulldog kernel.
-//! Validates fd, buffer pointer, and length before writing.
 
-use crate::syscall::errno::{err, errno, strerror};
-use crate::syscall::stubs::copy_from_user_into;
+use crate::syscall::fd::current_process_fd_table;
+use core::slice;
 use log::{info, error};
 
-/// sys_write(fd, buf_ptr, len)
-/// - Returns EBADF if fd is invalid (0 reserved for stdin).
-/// - Returns EFAULT if buf_ptr is invalid.
-/// - Returns EINVAL if len is absurdly large.
-/// - Returns 0 if len == 0 (no-op).
-/// - Otherwise logs the buffer contents and returns 0 (success).
-pub fn sys_write(fd: u64, buf_ptr: u64, len: u64) -> u64 {
-    // Validate fd: for now, accept only >= 1
-    if fd == 0 {
-        let code = errno::EBADF;
-        error!("[WRITE] invalid fd={} → {} ({})", fd, code, strerror(code));
-        return err(code);
-    }
+const EBADF: u64  = 9;
+const EFAULT: u64 = 14;
+const EINVAL: u64 = 22;
+const MAX_WRITE: usize = 4096;
+const HIGHER_HALF_BASE: u64 = 0x0000_0080_0000_0000;
 
-    // Zero-length write is a no-op
-    if len == 0 {
+/// Syscall entry point: write(fd, buf_ptr, len)
+pub fn sys_write(fd: u64, buf_ptr: u64, len_u64: u64) -> u64 {
+    if len_u64 == 0 {
         info!("[WRITE] fd={} zero-length write → 0", fd);
         return 0;
     }
 
-    // Guard against absurdly large lengths
-    if len == u32::MAX as u64 {
-        let code = errno::EINVAL;
-        error!(
-            "[WRITE] fd={} huge length {} → {} ({})",
-            fd,
-            len,
-            code,
-            strerror(code)
-        );
-        return err(code);
+    let len: usize = match usize::try_from(len_u64) {
+        Ok(l) => l,
+        Err(_) => {
+            error!("[WRITE] length {} does not fit usize → EINVAL", len_u64);
+            return -(EINVAL as i64) as u64;
+        }
+    };
+
+    if len > MAX_WRITE {
+        error!("[WRITE] length {} exceeds MAX_WRITE={} → EINVAL", len, MAX_WRITE);
+        return -(EINVAL as i64) as u64;
     }
 
-    // Validate buffer pointer and copy
-    let mut scratch = [0u8; 256];
-    match copy_from_user_into(buf_ptr, len as usize, &mut scratch) {
-        Ok(buf) => {
-            let s = core::str::from_utf8(buf).unwrap_or("<invalid utf8>");
-            info!("[WRITE] fd={} buf=\"{}\"", fd, s);
-            0 // success
-        }
-        Err(_) => {
-            let code = errno::EFAULT;
-            error!(
-                "[WRITE] invalid user buffer {:#x} → {} ({})",
-                buf_ptr,
-                code,
-                strerror(code)
-            );
-            err(code)
-        }
+    // IMPORTANT: don't classify pointer overflow as EINVAL.
+    // Let copy_from_user decide and return EFAULT on invalid/overflow.
+    // (Or if you want an early check, map overflow to EFAULT.)
+    if buf_ptr.checked_add(len as u64).is_none() {
+        error!("[WRITE] pointer overflow buf_ptr=0x{:x} len={} → EFAULT", buf_ptr, len);
+        return -(EFAULT as i64) as u64;
     }
+
+    let mut guard = current_process_fd_table();
+    let table = match guard.as_mut() {
+        Some(t) => t,
+        None => {
+            error!("[WRITE] FD table not initialized → EBADF");
+            return -(EBADF as i64) as u64;
+        }
+    };
+
+    if fd == 0 {
+        error!("[WRITE] attempt to write to stdin fd=0 → EBADF");
+        return -(EBADF as i64) as u64;
+    }
+
+    let file = match table.get_mut(&fd) {
+        Some(f) => f,
+        None => {
+            error!("[WRITE] unknown fd={} → EBADF", fd);
+            return -(EBADF as i64) as u64;
+        }
+    };
+
+    let slice: &'static [u8] = match copy_from_user(buf_ptr, len) {
+        Some(s) => s,
+        None => {
+            error!("[WRITE] invalid user buffer 0x{:016x} → EFAULT", buf_ptr);
+            return -(EFAULT as i64) as u64;
+        }
+    };
+
+    let wrote = file.write(slice);
+    info!("[WRITE] fd={} wrote={} bytes", fd, wrote);
+    wrote as u64
 }
+
+/// Harness-only stub: accept higher-half pointers and construct a slice.
+fn copy_from_user(ptr: u64, len: usize) -> Option<&'static [u8]> {
+    if len == 0 {
+        return Some(&[]);
+    }
+    if ptr == 0 {
+        return None;
+    }
+    // Reject non-higher-half and overflow; classify as EFAULT at call site.
+    if ptr < HIGHER_HALF_BASE || ptr.checked_add(len as u64).is_none() {
+        return None;
+    }
+    // SAFETY: Harness only. Assume buffer is mapped and readable.
+    unsafe { Some(slice::from_raw_parts(ptr as *const u8, len)) }
+}
+
+
+
+
+
 
 

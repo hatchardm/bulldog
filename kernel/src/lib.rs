@@ -28,6 +28,7 @@ use x86_64::{
         mapper::MapToError, mapper::Mapper, FrameAllocator, Page, PageTableFlags, PhysFrame, Size4KiB, Translate,
     },
 };
+ use crate::syscall::fd::init_fd_table_with_std;
 
 #[macro_use]
 pub mod macros;
@@ -127,10 +128,11 @@ pub fn kernel_init(
     #[cfg(not(feature = "syscall_tests"))]
     {info!("Syscall handler ready");}
 
+    init_fd_table_with_std();
 
    #[cfg(feature = "syscall_tests")]
    tests::syscall_harness::run_syscall_tests();
-
+   
 
 
     // APIC MMIO mapping

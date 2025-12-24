@@ -51,6 +51,7 @@ extern "C" fn rust_dispatch(num: u64, a0: u64, a1: u64, a2: u64) -> u64 {
     );
 
     let ret = dispatch(num, a0, a1, a2);
+    #[cfg(feature = "syscall_tests")]
     info!("syscall num={} ret={}", num, ret);
     ret
 }
