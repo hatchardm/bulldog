@@ -7,6 +7,9 @@ pub const SYS_WRITE: u64 = 1;
 pub const SYS_EXIT:  u64 = 2;
 pub const SYS_OPEN:  u64 = 3;
 pub const SYS_READ:  u64 = 4;
+pub const SYS_ALLOC: u64 = 5;
+pub const SYS_FREE:  u64 = 6;
+
 
 /// Uniform type for syscall functions in the table.
 pub type SyscallFn = fn(u64, u64, u64) -> u64;

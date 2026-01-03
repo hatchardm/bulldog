@@ -14,6 +14,8 @@ pub mod exit;
 pub mod open;
 pub mod read;
 pub mod fd;
+pub mod alloc;
+pub mod free;
 
 pub use dispatcher::{
     init_syscall,
@@ -23,12 +25,22 @@ pub use dispatcher::{
 };
 
 // Re-export syscall numbers
-pub use stubs::{SYS_WRITE, SYS_EXIT, SYS_OPEN, SYS_READ};
+pub use stubs::{
+    SYS_WRITE,
+    SYS_EXIT,
+    SYS_OPEN,
+    SYS_READ,
+    SYS_ALLOC,
+    SYS_FREE,
+};
 
-// Re-export syscall functions
+// Re-export syscall functions (ABI trampolines only)
 pub use write::sys_write;
 pub use exit::sys_exit;
 pub use open::sys_open;
 pub use read::sys_read;
+pub use alloc::sys_alloc_trampoline;
+pub use free::sys_free_trampoline;
+
 
 

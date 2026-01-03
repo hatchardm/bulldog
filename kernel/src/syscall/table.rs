@@ -2,8 +2,24 @@
 
 //! Static syscall table with function pointer lookup
 
-use super::stubs::{SyscallFn, SYS_WRITE, SYS_OPEN, SYS_READ, SYS_EXIT};
-use crate::syscall::{write::sys_write, exit::sys_exit, open::sys_open, read::sys_read};
+use super::stubs::{
+    SyscallFn,
+    SYS_WRITE,
+    SYS_OPEN,
+    SYS_READ,
+    SYS_EXIT,
+    SYS_ALLOC,
+    SYS_FREE,
+};
+
+use crate::syscall::{
+    write::sys_write,
+    exit::sys_exit,
+    open::sys_open,
+    read::sys_read,
+    alloc::sys_alloc_trampoline,
+    free::sys_free_trampoline,
+};
 
 pub const SYSCALL_TABLE_SIZE: usize = 512;
 
@@ -14,10 +30,16 @@ fn sys_exit_trampoline(code: u64, _arg1: u64, _arg2: u64) -> u64 {
 
 const fn init_table() -> [Option<SyscallFn>; SYSCALL_TABLE_SIZE] {
     let mut t: [Option<SyscallFn>; SYSCALL_TABLE_SIZE] = [None; SYSCALL_TABLE_SIZE];
+
     t[SYS_WRITE as usize] = Some(sys_write);
     t[SYS_EXIT  as usize] = Some(sys_exit_trampoline);
     t[SYS_OPEN  as usize] = Some(sys_open);
     t[SYS_READ  as usize] = Some(sys_read);
+
+    // Allocator syscalls (ABI trampolines)
+    t[SYS_ALLOC as usize] = Some(sys_alloc_trampoline);
+    t[SYS_FREE  as usize] = Some(sys_free_trampoline);
+
     t
 }
 
@@ -31,6 +53,7 @@ pub fn lookup(num: u64) -> Option<SyscallFn> {
         None
     }
 }
+
 
 
 
