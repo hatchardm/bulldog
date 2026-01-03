@@ -45,7 +45,6 @@ pub mod font;
 pub mod color;
 pub mod logger;
 pub mod syscall;
-pub mod user_sys;
 pub mod serial;
 
 #[cfg(feature = "syscall_tests")]

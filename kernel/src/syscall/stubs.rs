@@ -9,6 +9,7 @@ pub const SYS_OPEN:  u64 = 3;
 pub const SYS_READ:  u64 = 4;
 pub const SYS_ALLOC: u64 = 5;
 pub const SYS_FREE:  u64 = 6;
+pub const SYS_CLOSE: u64 = 7;
 
 
 /// Uniform type for syscall functions in the table.

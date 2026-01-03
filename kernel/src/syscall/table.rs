@@ -10,6 +10,7 @@ use super::stubs::{
     SYS_EXIT,
     SYS_ALLOC,
     SYS_FREE,
+    SYS_CLOSE,
 };
 
 use crate::syscall::{
@@ -19,6 +20,7 @@ use crate::syscall::{
     read::sys_read,
     alloc::sys_alloc_trampoline,
     free::sys_free_trampoline,
+    close::sys_close,
 };
 
 pub const SYSCALL_TABLE_SIZE: usize = 512;
@@ -26,6 +28,11 @@ pub const SYSCALL_TABLE_SIZE: usize = 512;
 // Trampoline for sys_exit (1-arg) to fit the 3-arg SyscallFn signature.
 fn sys_exit_trampoline(code: u64, _arg1: u64, _arg2: u64) -> u64 {
     sys_exit(code)
+}
+
+// Trampoline for sys_close (1-arg) to fit the 3-arg SyscallFn signature.
+fn sys_close_trampoline(fd: u64, _arg1: u64, _arg2: u64) -> u64 {
+    sys_close(fd)
 }
 
 const fn init_table() -> [Option<SyscallFn>; SYSCALL_TABLE_SIZE] {
@@ -39,7 +46,7 @@ const fn init_table() -> [Option<SyscallFn>; SYSCALL_TABLE_SIZE] {
     // Allocator syscalls (ABI trampolines)
     t[SYS_ALLOC as usize] = Some(sys_alloc_trampoline);
     t[SYS_FREE  as usize] = Some(sys_free_trampoline);
-
+    t[SYS_CLOSE as usize] = Some(sys_close_trampoline);
     t
 }
 
