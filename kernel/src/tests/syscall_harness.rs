@@ -2,7 +2,7 @@
 //! Expanded syscall harness for Bulldog
 //! Exercises happy paths and richer error paths for syscalls.
 
-use crate::syscall::{SYS_WRITE, SYS_EXIT, SYS_OPEN, SYS_READ, SYS_ALLOC, SYS_FREE};
+use crate::syscall::{SYS_WRITE, SYS_EXIT, SYS_OPEN, SYS_READ, SYS_ALLOC, SYS_FREE, SYS_CLOSE};
 use crate::syscall::errno::{err, errno};
 use crate::syscall::fd::current_process_fd_table;
 use log::info;
@@ -52,6 +52,11 @@ fn sys_free(ptr: u64, size: u64) -> u64 {
     unsafe { syscall(SYS_FREE, ptr, size, 0) }
 }
 
+fn sys_close(fd: u64) -> u64 {
+    unsafe { syscall(SYS_CLOSE, fd, 0, 0) }
+}
+
+
 /// Decode raw syscall return values into a readable form.
 /// Converts raw u64 → signed errno → symbolic errno.
 fn format_ret(raw: u64) -> String {
@@ -69,6 +74,7 @@ fn format_ret(raw: u64) -> String {
         x if x == errno::EINVAL as i64 => "EINVAL",
         x if x == errno::ENOSYS as i64 => "ENOSYS",
         x if x == errno::ENOMEM as i64 => "ENOMEM",
+        x if x == errno::EMFILE as i64 => "EMFILE",
         _ => "EUNKNOWN",
     };
 
@@ -147,6 +153,54 @@ pub fn run_syscall_tests() {
     harness_log("sys_open", "bad_flags", fd);
     assert_eq!(fd, err(errno::EINVAL));
 
+    // --- sys_open FD exhaustion and reuse ---
+    // Open files until we hit EMFILE, tracking all successful FDs.
+    let mut fds: [u64; 64] = [0; 64];
+    let mut count = 0usize;
+
+    loop {
+        let path = b"fd_exhaust.txt\0";
+        let fd = sys_open(path.as_ptr(), 0);
+        let signed = fd as i64;
+
+        if signed < 0 {
+            // Expect EMFILE when we run out of descriptors.
+            harness_log("sys_open", "fd_exhaustion", fd);
+            assert_eq!(fd, err(errno::EMFILE));
+            break;
+        }
+
+        harness_log("sys_open", "fd_exhaustion_open", fd);
+        fds[count] = fd;
+        count += 1;
+
+        // Safety guard: don't overflow our local array.
+        assert!(count < fds.len(), "FD exhaustion test exceeded local FD buffer");
+    }
+
+    assert!(count > 0, "FD exhaustion test should have opened at least one FD");
+
+    // Find the lowest FD we opened (should be >= 3).
+    let mut lowest_fd = u64::MAX;
+    for i in 0..count {
+        if fds[i] != 0 && fds[i] < lowest_fd {
+            lowest_fd = fds[i];
+        }
+    }
+    assert!(lowest_fd >= 3, "lowest FD in exhaustion test should be >= 3");
+
+    // Close the lowest FD and ensure it becomes reusable.
+    let ret = sys_close(lowest_fd);
+    harness_log("sys_close", "close_lowest_fd", ret);
+    assert_eq!(ret, 0, "closing a valid FD should succeed");
+
+    // Open again and assert that we get the freed lowest FD back.
+    let path = b"fd_reuse.txt\0";
+    let fd_reused = sys_open(path.as_ptr(), 0);
+    harness_log("sys_open", "fd_reuse", fd_reused);
+    assert_eq!(fd_reused, lowest_fd, "sys_open should reuse the lowest available FD");
+
+
     // --- sys_read happy path ---
     let mut buf = [0u8; 16];
     let ret = sys_read(0, buf.as_mut_ptr(), buf.len() as u32);
@@ -194,6 +248,36 @@ pub fn run_syscall_tests() {
     harness_log("sys_free", "zero_size", ret);
     assert_eq!(ret, err(errno::EINVAL));
 
+    // --- syscall table sweep: implemented vs unimplemented ---
+    // Implemented syscall numbers should not return ENOSYS.
+    let implemented = [
+        SYS_WRITE,
+        SYS_EXIT,
+        SYS_OPEN,
+        SYS_READ,
+        SYS_ALLOC,
+        SYS_FREE,
+        SYS_CLOSE,
+    ];
+
+    for &num in implemented.iter() {
+        let ret = unsafe { syscall(num, 0, 0, 0) };
+        harness_log("sys_table", "implemented", ret);
+        // If a syscall legitimately returns ENOSYS internally, this would fail,
+        // but for Bulldog's current set, none should.
+        assert_ne!(ret, err(errno::ENOSYS), "implemented syscall {} returned ENOSYS", num);
+    }
+
+    // Clearly unimplemented syscall numbers should return ENOSYS.
+    let unknowns = [0u64, 8, 9, 500];
+
+    for &num in unknowns.iter() {
+        let ret = unsafe { syscall(num, 0, 0, 0) };
+        harness_log("sys_table", "unimplemented", ret);
+        assert_eq!(ret, err(errno::ENOSYS), "unimplemented syscall {} did not return ENOSYS", num);
+    }
+
+    
     // --- sys_exit ---
     let code = sys_exit(123);
     harness_log("sys_exit", "happy", code);

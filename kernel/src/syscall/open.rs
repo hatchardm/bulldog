@@ -8,10 +8,15 @@ use crate::syscall::fd::{current_process_fd_table, Stdout};
 use log::{info, error};
 use alloc::boxed::Box;
 
+/// Maximum file descriptor number handed out by sys_open.
+/// FDs 0,1,2 are reserved for stdin/stdout/stderr, so usable range is [3, MAX_FD].
+const MAX_FD: u64 = 64; // adjust as needed as Bulldog grows
+
 /// sys_open(path_ptr, flags, mode)
 /// - Returns ENOENT if path pointer is null.
 /// - Returns EFAULT if path pointer is invalid or not a valid C string.
 /// - Returns EINVAL if path is empty or flags unsupported.
+/// - Returns EMFILE if no more FDs are available.
 /// - Otherwise logs the path and flags, inserts a FileLike object, and returns the fd.
 pub fn sys_open(path_ptr: u64, flags: u64, _mode: u64) -> u64 {
     if path_ptr == 0 {
@@ -41,10 +46,27 @@ pub fn sys_open(path_ptr: u64, flags: u64, _mode: u64) -> u64 {
             let mut guard = current_process_fd_table();
             let table = guard.as_mut().expect("FD table not initialized");
 
-            // Allocate a new fd number (simple scheme: next available key).
-            let fd = table.len() as u64 + 3; // reserve 0,1,2 for stdin/out/err
-            table.insert(fd, Box::new(Stdout));
+            // Find the lowest available fd in [3, MAX_FD].
+            let mut fd = 3u64;
+            while fd <= MAX_FD {
+                if !table.contains_key(&fd) {
+                    break;
+                }
+                fd += 1;
+            }
 
+            if fd > MAX_FD {
+                let code = errno::EMFILE;
+                error!(
+                    "[OPEN] FD table exhausted (MAX_FD={}) → {} ({})",
+                    MAX_FD,
+                    code,
+                    strerror(code)
+                );
+                return err(code);
+            }
+
+            table.insert(fd, Box::new(Stdout));
             info!("[OPEN] path=\"{}\" flags={} → fd={}", path, flags, fd);
             fd
         }
@@ -58,6 +80,7 @@ pub fn sys_open(path_ptr: u64, flags: u64, _mode: u64) -> u64 {
         }
     }
 }
+
 
 
 
