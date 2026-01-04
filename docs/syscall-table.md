@@ -1,11 +1,11 @@
-# 📖 Bulldog Kernel – Syscall Table Example
+# Bulldog Kernel – Syscall Table Example
 
 This document shows how Bulldog wires syscall numbers to stub functions.  
 Contributors can use this as a reference when adding new syscalls.
 
 ---
 
-## 🔢 Syscall Numbers
+## Syscall Numbers
 
 - **1 → `sys_write`**  
 - **2 → `sys_exit`**  
@@ -14,7 +14,7 @@ Contributors can use this as a reference when adding new syscalls.
 
 ---
 
-## 🛠 Table Implementation
+## Table Implementation
 
 ```rust
 // File: kernel/src/syscall/table.rs
@@ -45,9 +45,7 @@ pub fn unknown(num: u64) -> u64 {
 
 ---
 
-## 🧪 Expected Output
-
-When running with `--features syscall_tests`, a successful `sys_write` should produce:
+## Expected Output
 
 ```
 [INFO] Syscall handler initialized at vector 0x80
@@ -59,7 +57,7 @@ hello bulldog
 
 ---
 
-## 📑 Stub Template Example – `sys_read`
+## Stub Template Example – `sys_read`
 
 To add a new syscall such as `sys_read`, follow these steps:
 
@@ -110,15 +108,13 @@ pub fn lookup(num: u64) -> Option<SyscallFn> {
 
 ### 3. Document expected behavior
 
-- **sys_read(fd, ptr, len)** should attempt to read `len` bytes from file descriptor `fd` into buffer at `ptr`.  
+- `sys_read(fd, ptr, len)` should attempt to read `len` bytes from file descriptor `fd` into buffer at `ptr`.  
 - For now, the stub logs the call and returns `0`.  
 - Once `read.rs` is implemented, update the stub to delegate to the real handler.
 
 ---
 
-## 🧪 Example Output (stub mode)
-
-When running with `--features syscall_tests` and invoking `sys_read`:
+## Example Output (stub mode)
 
 ```
 [INFO] sys_read (fd=0, ptr=0x1000, len=16)
@@ -127,7 +123,7 @@ When running with `--features syscall_tests` and invoking `sys_read`:
 
 ---
 
-## 📊 Syscall Number Allocation Table
+## Syscall Number Allocation Table
 
 | Number | Name       | Status        | Notes                          |
 |--------|------------|---------------|--------------------------------|
@@ -141,19 +137,19 @@ When running with `--features syscall_tests` and invoking `sys_read`:
 
 ---
 
-## 🤝 Contributor Notes
+## Contributor Notes
 
-- **Add new syscall numbers** as constants in `stubs.rs`.  
-- **Implement the stub function** with the signature `(u64, u64, u64) -> u64`.  
-- **Extend the lookup match** in `table.rs` to route the new number.  
-- **Document expected behavior** in `docs/syscall.md` so others can follow.  
-- **Logging hygiene:** Ensure each syscall logs entry, arguments, and return value for contributor clarity.  
-- **Error handling:** Unknown syscalls should always route through `unknown()` to avoid silent failures.  
-- **Number allocation:** Use the table above to avoid collisions and keep numbering consistent.
+- Add new syscall numbers as constants in `stubs.rs`.  
+- Implement the stub function with the signature `(u64, u64, u64) -> u64`.  
+- Extend the lookup match in `table.rs` to route the new number.  
+- Document expected behavior in `docs/syscall.md` so others can follow.  
+- Logging hygiene: Ensure each syscall logs entry, arguments, and return value.  
+- Error handling: Unknown syscalls should always route through `unknown()`.  
+- Number allocation: Use the table above to avoid collisions.
 
 ---
 
-## 🧭 Roadmap Context
+## Roadmap Context
 
 This table provides a clear baseline for expanding Bulldog’s syscall harness.  
 It is the foundation for building out the syscall dispatcher and eventually user‑mode execution.

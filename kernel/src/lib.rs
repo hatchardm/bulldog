@@ -28,7 +28,6 @@ use x86_64::{
         mapper::MapToError, mapper::Mapper, FrameAllocator, Page, PageTableFlags, PhysFrame, Size4KiB, Translate,
     },
 };
- use crate::syscall::fd::init_fd_table_with_std;
 
 #[macro_use]
 pub mod macros;
@@ -53,6 +52,7 @@ mod tests;
 use crate::allocator::ALLOCATOR;
 use crate::apic::{lapic_read, LapicRegister, setup_apic};
 use crate::memory::{BootInfoFrameAllocator, PreHeapAllocator, init_offset_page_table, map_lapic_mmio};
+use crate::syscall::fd::init_fd_table_with_std;
 
 /// Kernel initialization routine.
 /// 
@@ -97,8 +97,9 @@ pub fn kernel_init(
     {info!("Initializing heap");}
     allocator::init_heap(&mut mapper, &mut temp_allocator).expect("Heap initialization failed");
     #[cfg(not(feature = "syscall_tests"))]
-    #[cfg(not(feature = "syscall_tests"))]
     {info!("Heap initialized");}
+
+    init_fd_table_with_std(); // safe to use Box & BTreeMap now
 
     #[cfg(not(feature = "syscall_tests"))]
     {info!("Finalizing frame allocator from temp allocator");}
@@ -127,7 +128,7 @@ pub fn kernel_init(
     #[cfg(not(feature = "syscall_tests"))]
     {info!("Syscall handler ready");}
 
-    init_fd_table_with_std();
+    
 
    #[cfg(feature = "syscall_tests")]
    tests::syscall_harness::run_syscall_tests();

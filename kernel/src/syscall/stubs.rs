@@ -11,7 +11,6 @@ pub const SYS_ALLOC: u64 = 5;
 pub const SYS_FREE:  u64 = 6;
 pub const SYS_CLOSE: u64 = 7;
 
-
 /// Uniform type for syscall functions in the table.
 pub type SyscallFn = fn(u64, u64, u64) -> u64;
 
@@ -50,6 +49,48 @@ pub fn copy_cstr_from_user(path_ptr: u64, out: &mut [u8]) -> Result<&str, ()> {
     core::str::from_utf8(&out[..i]).map_err(|_| ())
 }
 
+/// Copy raw bytes FROM user → kernel.
+pub fn copy_from_user(src: u64, dst: &mut [u8]) -> Result<(), ()> {
+    if !is_user_ptr(src) { return Err(()); }
+
+    unsafe {
+        core::ptr::copy_nonoverlapping(src as *const u8, dst.as_mut_ptr(), dst.len());
+    }
+
+    Ok(())
+}
+
+/// Copy raw bytes FROM kernel → user.
+pub fn copy_to_user(dst: u64, src: &[u8]) -> Result<(), ()> {
+    if !is_user_ptr(dst) { return Err(()); }
+
+    unsafe {
+        core::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut u8, src.len());
+    }
+
+    Ok(())
+}
+
+/// ---------------------------------------------------------------------------
+///  Stdout — minimal FileLike implementation
+/// ---------------------------------------------------------------------------
+
+use crate::syscall::filelike::FileLike;
+use crate::syscall::errno::Errno;
+use log::info;
+
+/// Very simple stdout sink for early kernel bring-up.
+/// Writes go to QEMU/log output.
+pub struct Stdout;
+
+impl FileLike for Stdout {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Errno> {
+        // Convert to UTF‑8 if possible, otherwise print placeholder
+        let s = core::str::from_utf8(buf).unwrap_or("<invalid utf8>");
+        info!("[STDOUT] {}", s);
+        Ok(buf.len())
+    }
+}
 
 
 

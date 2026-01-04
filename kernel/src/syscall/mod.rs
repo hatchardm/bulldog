@@ -7,6 +7,7 @@ pub mod dispatcher;
 pub mod stubs;
 pub mod table;
 pub mod errno;
+pub mod filelike;
 
 
 // Dedicated syscall modules

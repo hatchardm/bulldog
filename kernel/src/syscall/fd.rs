@@ -1,64 +1,125 @@
 // File: kernel/src/syscall/fd.rs
-//! File descriptor table management for Bulldog kernel.
+//! File descriptor table for Bulldog kernel.
+//! Stores FdEntry objects which wrap FileLike trait objects.
+//! Provides fd_alloc, fd_get, fd_close APIs for syscalls and VFS.
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use log::info;
+
 use spin::Mutex;
 
-pub trait FileLike: Send {
-    fn read(&mut self, buf: &mut [u8]) -> usize {
-        let _ = buf;
-        0
-    }
-    fn write(&mut self, buf: &[u8]) -> usize {
-        let _ = buf;
-        0
-    }
+use crate::syscall::errno::Errno;
+use crate::syscall::filelike::FileLike;
+use crate::syscall::stubs::Stdout;
+
+/// Maximum file descriptor number.
+/// Usable range is [3, MAX_FD].
+pub const MAX_FD: u64 = 64;
+
+/// A single file descriptor entry.
+/// Wraps a FileLike object plus metadata.
+pub struct FdEntry {
+    pub file: Box<dyn FileLike + Send>,
+    pub flags: u64,
+    pub offset: usize,
 }
 
-pub struct Stdin;
-pub struct Stdout;
-pub struct Stderr;
+/// Per‑process FD table.
+/// Maps fd → FdEntry.
+pub type FdTable = BTreeMap<u64, FdEntry>;
 
-impl FileLike for Stdin {}
-impl FileLike for Stdout {
-    fn write(&mut self, buf: &[u8]) -> usize {
-        if let Ok(s) = core::str::from_utf8(buf) {
-            info!("[STDOUT] {}", s);
-        }
-        buf.len()
-    }
-}
-impl FileLike for Stderr {
-    fn write(&mut self, buf: &[u8]) -> usize {
-        if let Ok(s) = core::str::from_utf8(buf) {
-            // Keep stderr distinct in logs
-            info!("[STDERR] {}", s);
-        }
-        buf.len()
-    }
-}
+/// Global FD table for the current process.
+/// (Later this will be per‑process.)
+static FD_TABLE: Mutex<Option<FdTable>> = Mutex::new(None);
 
-static FD_TABLE: Mutex<Option<BTreeMap<u64, Box<dyn FileLike + Send>>>> = Mutex::new(None);
-
-/// Initialize FD table and seed std fds (0,1,2).
+/// Called from kernel_init() AFTER heap initialization.
+/// Creates FD table and installs stdout on FD 1.
 pub fn init_fd_table_with_std() {
     let mut guard = FD_TABLE.lock();
+
+    if guard.is_some() {
+        return; // already initialized
+    }
+
+    let mut table = BTreeMap::new();
+
+    // FD 1 = stdout
+    table.insert(
+        1,
+        FdEntry {
+            file: Box::new(Stdout),
+            flags: 0,
+            offset: 0,
+        },
+    );
+
+    *guard = Some(table);
+}
+
+/// Get the FD table.
+/// Panics if called before init_fd_table_with_std().
+pub fn current_process_fd_table() -> spin::MutexGuard<'static, Option<FdTable>> {
+    let guard = FD_TABLE.lock();
+
     if guard.is_none() {
-        let mut map: BTreeMap<u64, Box<dyn FileLike + Send>> = BTreeMap::new();
-        map.insert(0, Box::new(Stdin)  as Box<dyn FileLike + Send>);
-        map.insert(1, Box::new(Stdout) as Box<dyn FileLike + Send>);
-        map.insert(2, Box::new(Stderr) as Box<dyn FileLike + Send>);
-        *guard = Some(map);
-        info!("[FD] initialized with std fds 0=stdin,1=stdout,2=stderr");
+        panic!("FD table accessed before initialization");
+    }
+
+    guard
+}
+
+/// Allocate the lowest available FD >= 3.
+pub fn fd_alloc(entry: FdEntry) -> Result<u64, Errno> {
+    let mut guard = current_process_fd_table();
+    let table = guard.as_mut().unwrap();
+
+    let mut fd = 3u64;
+    while fd <= MAX_FD {
+        if !table.contains_key(&fd) {
+            table.insert(fd, entry);
+            return Ok(fd);
+        }
+        fd += 1;
+    }
+
+    Err(Errno::EMFILE)
+}
+
+/// Get a mutable reference to an FD entry.
+pub fn fd_get(fd: u64) -> Result<&'static mut FdEntry, Errno> {
+    let mut guard = current_process_fd_table();
+    let table = guard.as_mut().unwrap();
+
+    let entry_ptr: *mut FdEntry = match table.get_mut(&fd) {
+        Some(e) => e,
+        None => return Err(Errno::EBADF),
+    };
+
+    // SAFETY:
+    // We leak the guard and return a &'static mut reference.
+    // This is safe because Bulldog is single‑threaded for now.
+    Ok(unsafe { &mut *entry_ptr })
+}
+
+/// Close an FD and remove it from the table.
+pub fn fd_close(fd: u64) -> Result<(), Errno> {
+    if fd < 3 {
+        return Err(Errno::EBADF);
+    }
+
+    let mut guard = current_process_fd_table();
+    let table = guard.as_mut().unwrap();
+
+    match table.remove(&fd) {
+        Some(mut entry) => entry.file.close(),
+        None => Err(Errno::EBADF),
     }
 }
 
-
-/// Get a locked reference to the FD table (lazy-safe if you call init first).
-pub fn current_process_fd_table() -> spin::MutexGuard<'static, Option<BTreeMap<u64, Box<dyn FileLike + Send>>>> {
-    FD_TABLE.lock()
+/// Clear the FD table (used by sys_exit).
+pub fn fd_clear_all() {
+    let mut guard = FD_TABLE.lock();
+    *guard = None;
 }
 
 

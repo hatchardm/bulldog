@@ -1,0 +1,176 @@
+# Bulldog Kernel – APIC Subsystem
+
+This document describes Bulldog’s APIC subsystem, including LAPIC and IOAPIC roles, interrupt routing, vector assignment, and initialization order. It provides contributors with a clear understanding of how interrupts are delivered, how the APIC components interact, and how the subsystem integrates with the IDT and timer infrastructure.
+
+---
+
+## Overview
+
+Bulldog uses the Advanced Programmable Interrupt Controller (APIC) model for all interrupt delivery. The legacy PIC8259 is not used for normal operation. The APIC subsystem consists of:
+
+- The Local APIC (LAPIC) on each CPU  
+- The I/O APIC (IOAPIC) for external hardware interrupts  
+- A deterministic vector layout  
+- Clean separation between exceptions, IRQs, and syscalls  
+- Integration with the IDT and privilege switching  
+
+The APIC subsystem forms the foundation for interrupt handling, scheduling, syscalls, and future SMP support.
+
+---
+
+## APIC Components
+
+### Local APIC (LAPIC)
+
+Each CPU contains a LAPIC responsible for:
+
+- Delivering per‑CPU interrupts  
+- Handling the LAPIC timer  
+- Sending and receiving IPIs (future SMP)  
+- Acknowledging interrupts via EOI  
+- Reporting APIC ID and version  
+
+The LAPIC is memory‑mapped into the higher‑half kernel address space and is enabled early during boot.
+
+### I/O APIC (IOAPIC)
+
+The IOAPIC handles external hardware interrupts. It provides:
+
+- Redirection table entries for each IRQ  
+- Delivery mode configuration  
+- Vector assignment  
+- Masking and unmasking of IRQ lines  
+- Edge or level triggering  
+
+Bulldog remaps legacy IRQs to the APIC vector range to avoid conflicts with CPU exceptions.
+
+---
+
+## Vector Layout
+
+Bulldog maintains a deterministic vector layout for clarity and debugging:
+
+0x00–0x1F → CPU exceptions  
+0x20–0x2F → Hardware IRQs (remapped PIC range)  
+0x30–0x3F → LAPIC timer and APIC‑specific interrupts  
+0x80      → Primary syscall vector  
+0x81–0x8F → Reserved for future syscalls  
+0x90–0xFF → Reserved for future expansion  
+
+This layout ensures:
+
+- Exceptions remain at architectural vector numbers  
+- Hardware IRQs do not overlap with exceptions  
+- Syscalls occupy a dedicated, non‑overlapping range  
+- APIC‑specific interrupts have a predictable region  
+
+---
+
+## LAPIC Initialization
+
+LAPIC initialization occurs during early kernel boot and includes:
+
+- Reading the LAPIC base MSR  
+- Mapping the LAPIC MMIO region  
+- Verifying the LAPIC enable bit  
+- Logging LAPIC ID and version  
+- Enabling the LAPIC via the SVR  
+- Configuring the LAPIC timer  
+- Setting the LAPIC timer vector  
+- Writing EOI after each interrupt  
+
+The LAPIC is required for correct kernel operation.
+
+---
+
+## IOAPIC Initialization
+
+IOAPIC setup includes:
+
+- Mapping the IOAPIC MMIO region  
+- Reading the IOAPIC ID and version  
+- Determining the number of redirection entries  
+- Remapping IRQ0–IRQ15 to vectors 0x20–0x2F  
+- Configuring delivery mode and trigger mode  
+- Masking or unmasking IRQ lines as needed  
+
+Bulldog uses the IOAPIC for all external hardware interrupts. The legacy PIC is left in a quiescent state.
+
+---
+
+## Interrupt Routing
+
+Interrupt routing in Bulldog follows a clear path:
+
+1. External hardware asserts an IRQ line.  
+2. The IOAPIC consults its redirection table.  
+3. The IOAPIC delivers the interrupt to the target LAPIC.  
+4. The LAPIC raises the interrupt at the assigned vector.  
+5. The CPU enters the IDT entry for that vector.  
+6. The kernel handler processes the interrupt.  
+7. The LAPIC receives an EOI.  
+
+This routing model ensures deterministic delivery and clean separation between hardware IRQs and CPU exceptions.
+
+---
+
+## LAPIC Timer Integration
+
+The LAPIC timer is configured through the APIC subsystem and uses:
+
+- The LVT Timer register  
+- The divide configuration register  
+- The initial count register  
+- The LAPIC timer vector  
+
+The timer subsystem uses this interrupt source for:
+
+- Scheduler ticks  
+- Global tick counter updates  
+- Health check and watchdog mechanisms  
+
+See `timer.md` for full details.
+
+---
+
+## Inter‑Processor Interrupts (Future SMP)
+
+Bulldog reserves space in the APIC subsystem for future SMP support. Planned features include:
+
+- Startup IPIs for AP initialization  
+- IPI‑based TLB shootdowns  
+- Per‑CPU LAPIC timer configuration  
+- Cross‑CPU scheduling signals  
+- Per‑CPU interrupt routing policies  
+
+These features will be documented as SMP support is implemented.
+
+---
+
+## Error Handling and Logging
+
+The APIC subsystem logs:
+
+- LAPIC ID and version  
+- IOAPIC ID and version  
+- Redirection table configuration  
+- Vector assignments  
+- Unexpected or spurious interrupts  
+
+This logging is essential for debugging early bring‑up and interrupt routing issues.
+
+---
+
+## Contributor Notes
+
+- Maintain vector hygiene when adding new interrupts  
+- Ensure LAPIC and IOAPIC mappings remain consistent  
+- Document new APIC‑related vectors and redirection entries  
+- Avoid long‑running work inside interrupt handlers  
+- Keep APIC initialization deterministic and reproducible  
+
+---
+
+## License
+
+MIT or Apache 2.0 — to be determined.

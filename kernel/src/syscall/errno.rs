@@ -291,4 +291,38 @@ macro_rules! strerror_map {
         EHWPOISON => "Memory page has hardware error",
      }
 
+/// Strongly-typed errno for internal kernel use.
+/// Maps directly to the numeric errno constants.
+#[derive(Debug, Copy, Clone)]
+ #[repr(u64)]
+pub enum Errno {
+    EPERM,
+    ENOENT,
+    EBADF,
+    EFAULT,
+    EINVAL,
+    EMFILE,
+    ENOSYS,
+}
+
+impl Errno {
+    /// Convert Errno → numeric errno constant
+    pub fn num(self) -> u64 {
+        use crate::syscall::errno::errno::*;
+        match self {
+            Errno::EPERM   => EPERM,
+            Errno::ENOENT  => ENOENT,
+            Errno::EBADF   => EBADF,
+            Errno::EFAULT  => EFAULT,
+            Errno::EINVAL  => EINVAL,
+            Errno::EMFILE  => EMFILE,
+            Errno::ENOSYS  => ENOSYS,
+        }
+    }
+}
+
+/// Convert Errno → -errno return value (Linux convention)
+pub fn err_from(e: Errno) -> u64 {
+    err(e.num())
+}
 
