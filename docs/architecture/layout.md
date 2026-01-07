@@ -1,33 +1,38 @@
-# Bulldog Kernel – Memory Layout Specification
+# Bulldog Kernel – Memory Layout (Current Implementation)
 
-This document defines Bulldog’s physical and virtual memory layout, including the higher‑half
-kernel region, direct physical map, identity‑mapped boot regions, and reserved address
-ranges. It serves as a reference for contributors working on paging, allocators, privilege
-switching, and future user‑mode execution.
+> **Disclaimer:**  
+> This document describes Bulldog’s *current* memory layout as implemented in the kernel today.  
+> It does **not** represent the full long‑term design.  
+> Planned features such as guard pages, user‑mode address spaces, IOAPIC regions, per‑CPU stacks,  
+> and KASLR will be documented once implemented.  
+>  
+> For subsystem‑specific details, see:  
+> - `memory.md` (paging, allocators, direct map)  
+> - `gdt.md` (TSS, IST stacks)  
+> - `apic.md` (LAPIC MMIO region)  
+> - `kernel_init.md` (initialization sequence)
 
-Bulldog targets the `x86_64-bulldog` architecture and uses a higher‑half kernel design with
-a deterministic virtual address structure.
-
----
-
-## Overview
-
-Bulldog’s memory layout is designed around the following goals:
-
-- Stable higher‑half kernel addresses  
-- Deterministic virtual address regions  
-- Direct physical memory mapping  
-- Identity‑mapped low memory for early boot  
-- Clear separation between kernel and user space  
-- Contributor‑friendly debugging and logging  
-
-This layout is consistent across all kernel builds and is documented here for clarity.
+This file provides a high‑level view of the virtual and physical memory layout used by Bulldog today.  
+It reflects the real behavior of the kernel and bootloader, not the future architecture.
 
 ---
 
-## Virtual Address Space Layout
+# 1. Overview
 
-A simplified view of Bulldog’s virtual address space:
+Bulldog uses a higher‑half kernel design with:
+
+- A stable higher‑half kernel region  
+- A direct physical memory map (bootloader‑provided offset)  
+- Statically allocated kernel stacks (including IST stacks)  
+- A fixed LAPIC MMIO virtual address  
+- No user‑mode memory yet  
+- No guard pages yet  
+
+This layout is deterministic and optimized for debugging and contributor clarity.
+
+---
+
+# 2. Virtual Address Space (Current)
 
 ```
 0xFFFF_FFFF_FFFF_FFFF  ────────────────────────────────  Canonical high
@@ -37,132 +42,84 @@ A simplified view of Bulldog’s virtual address space:
 |  Kernel data / BSS                                    |
 |  Kernel heap                                          |
 |  Kernel stacks                                        |
-|  Direct physical map                                  |
+|  LAPIC MMIO region (0xFFFF_FF00_0000_0000)            |
+|  Direct physical map (bootloader offset)              |
 |                                                       |
 0xFFFF_8000_0000_0000  ────────────────────────────────  Kernel base
-|                     Reserved / Guard Regions          |
-|                                                       |
-0xFFFF_0000_0000_0000  ────────────────────────────────  Reserved (future)
-|                     Unused / Reserved                 |
-|                                                       |
-0x0000_8000_0000_0000  ────────────────────────────────  User/kernel boundary
-|                     User Space (future)               |
-|                                                       |
-|  User text / data                                     |
-|  User heap / stack                                    |
-|  Shared libraries (future)                            |
+|                     Reserved (unused)                 |
 |                                                       |
 0x0000_0000_0000_0000  ────────────────────────────────  Canonical low
 ```
 
-Key properties:
+### Key points:
 
 - Kernel occupies the upper canonical half  
-- User space occupies the lower canonical half  
-- No overlap between user and kernel regions  
-- Direct physical map resides inside the higher‑half region  
+- User space is **not implemented**  
+- Direct map uses the offset provided by the bootloader  
+- LAPIC MMIO is mapped at a fixed higher‑half address  
+- Kernel stacks (including IST stacks) live in higher‑half static regions  
 
 ---
 
-## Kernel Virtual Regions
+# 3. Kernel Virtual Regions
 
-### Kernel Text and Read‑Only Data
+### Kernel Text / Read‑Only Data
 
-Located at the beginning of the higher‑half region:
-
-```
-0xFFFF_8000_0000_0000 → 0xFFFF_8000_XXXX_XXXX
-```
-
-Contains:
-
-- `.text`  
-- `.rodata`  
-- `.gcc_except_table` (if present)  
+Loaded by the bootloader into higher‑half memory.
 
 Mapped as:
 
 - Read‑only  
 - Executable  
 
----
-
-### Kernel Data and BSS
-
-Immediately following `.text`:
-
-```
-0xFFFF_8000_XXXX_XXXX → 0xFFFF_8000_YYYY_YYYY
-```
-
-Contains:
-
-- `.data`  
-- `.bss`  
-- Global kernel structures  
+### Kernel Data / BSS
 
 Mapped as:
 
 - Read/write  
 - Non‑executable  
 
----
-
 ### Kernel Heap
 
-The kernel heap grows upward from a fixed base:
+Initialized during `kernel_init` using:
 
-```
-0xFFFF_8080_0000_0000 → dynamic growth
-```
+- Temporary pre‑heap allocator  
+- Full bitmap allocator  
 
-Backed by:
-
-- Physical frames from the early allocator  
-- Later: slab allocator, guard pages, profiling  
-
----
+Grows upward from a fixed region in higher‑half space.
 
 ### Kernel Stacks
 
-Each CPU (future SMP) receives:
+Bulldog currently uses:
 
-- A dedicated kernel stack  
-- A guard page below the stack  
+- A main kernel stack  
+- Two IST stacks:  
+  - `STACK` (double fault)  
+  - `LAPIC_STACK` (LAPIC timer + page fault)
 
-Example layout:
+All stacks:
 
-```
-[ Guard Page ]
-[ Kernel Stack ]
-[ Per-CPU Data (future) ]
-```
-
-Stacks reside in a reserved higher‑half region.
+- Are statically allocated  
+- Are 128 KiB  
+- Are 16‑byte aligned  
+- Have **no guard pages yet**  
 
 ---
 
-## Direct Physical Memory Map
+# 4. Direct Physical Memory Map
 
-Bulldog maps all physical memory into a contiguous virtual region:
-
-```
-virt = phys + DIRECT_MAP_OFFSET
-phys = virt - DIRECT_MAP_OFFSET
-```
-
-Example:
+The bootloader provides a physical‑to‑virtual offset:
 
 ```
-DIRECT_MAP_OFFSET = 0xFFFF_9000_0000_0000
+virt = phys + phys_mem_offset
 ```
 
 This region is used for:
 
+- Page‑table access  
 - Frame allocation  
-- Page‑table manipulation  
-- DMA buffers (future)  
-- Kernel heap initialization  
+- LAPIC stack remapping  
+- Logging physical memory regions  
 
 Mapped as:
 
@@ -171,86 +128,94 @@ Mapped as:
 
 ---
 
-## Identity‑Mapped Boot Region
+# 5. LAPIC MMIO Region
 
-During early boot, the bootloader provides identity mapping for low memory:
+Mapped at a fixed virtual address:
 
 ```
-0x0000_0000_0000_0000 → 0x0000_0000_0000_0000
+0xFFFF_FF00_0000_0000
 ```
 
-Used for:
+Mapped to physical:
 
-- Bootloader stack  
-- Early kernel entry  
-- Temporary page tables  
-- Boot information structures  
+```
+0xFEE0_0000
+```
 
-This region is discarded once the kernel transitions fully into the higher half.
+Flags:
+
+- PRESENT  
+- WRITABLE  
+- NO_EXECUTE  
+
+Used by:
+
+- `lapic_read` / `lapic_write`  
+- `setup_apic()`  
 
 ---
 
-## Physical Memory Layout
+# 6. Physical Memory Layout (Current)
 
-A typical physical memory map:
+A typical bootloader memory map includes:
 
 ```
-0x0000_0000 – 0x0009_FFFF   → Low memory / BIOS remnants (unused)
+0x0000_0000 – 0x0009_FFFF   → Low memory (unused by kernel)
 0x0010_0000 – 0x00FF_FFFF   → Kernel ELF load region
 0x0100_0000 – ...           → Usable RAM (frame allocator)
 ACPI / MMIO regions         → Reserved
 ```
 
-Bulldog uses the bootloader‑provided memory map to determine:
+Bulldog uses:
 
-- Usable RAM  
-- Reserved regions  
-- ACPI tables  
-- MMIO windows  
+- Bootloader memory map  
+- `BootInfoFrameAllocator`  
+- Bitmap tracking of used frames  
 
 ---
 
-## Reserved Regions
+# 7. Reserved Regions (Current)
 
-Bulldog reserves the following virtual regions:
+The following virtual regions are reserved but not yet used:
 
 - `0xFFFF_0000_0000_0000` → `0xFFFF_7FFF_FFFF_FFFF`  
   Reserved for future kernel subsystems  
 
-- `0x0000_8000_0000_0000` → `0xFFFF_0000_0000_0000`  
-  User/kernel boundary  
+- `0x0000_0000_0000_0000` → `0xFFFF_7FFF_FFFF_FFFF`  
+  User space (future)  
 
-- Guard pages around:  
-  - kernel stacks  
-  - kernel heap (future)  
-  - critical kernel structures  
+Guard pages are planned but not implemented.
 
 ---
 
-## Future Layout Extensions
+# 8. Future Layout Extensions
 
-Planned additions:
+Planned but **not implemented**:
 
-- Per‑process virtual address spaces  
-- Copy‑on‑write regions  
-- Shared memory segments  
+- User‑mode address spaces  
+- Per‑process page tables  
+- Guard pages around stacks and heap  
+- Copy‑on‑write  
+- Shared memory  
 - Memory‑mapped files  
-- User‑mode stacks and heaps  
-- KASLR (kernel address randomization)  
-- Per‑CPU direct‑map windows  
+- IOAPIC MMIO region  
+- SMP per‑CPU stacks  
+- KASLR  
+
+These will be documented once implemented.
 
 ---
 
-## Contributor Notes
+# 9. Contributor Notes
 
-- Keep this layout updated as new subsystems are added  
-- Document all new virtual regions and address ranges  
-- Ensure mappings remain deterministic for debugging  
-- Validate alignment and guard pages for all kernel stacks  
-- Avoid overlapping or ambiguous regions  
+- This file describes the *current* layout, not the final design  
+- See `memory.md`, `gdt.md`, `apic.md`, and `kernel_init.md` for subsystem details  
+- Keep this document updated as new regions are added  
+- Avoid introducing overlapping or ambiguous address ranges  
+- Maintain deterministic mappings for debugging  
 
 ---
 
-## License
+# License
 
-MIT or Apache 2.0 — to be determined.
+MIT or Apache 2.0 — TBD.

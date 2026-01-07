@@ -1,196 +1,382 @@
-# Bulldog Kernel – Syscall Development Guide
-
-**Version:** v0.1-pre  
-**Updated:** 2025-11-30  
-
-This document replaces the former `apic.md` milestone guide.  
-It provides technical context for contributors working on privilege switching and syscall infrastructure in the `feature/syscall` branch.
+# Bulldog Syscall Architecture  
+*A living document describing the current syscall ABI, the long‑term capability‑secured model, and the migration path between them.*
 
 ---
 
-## Milestone Lineage
+## 1. Overview
 
-- `feature/pic8259` → Legacy PIC baseline  
-- `feature/apic` → Modern APIC baseline  
-- `feature/syscall` → Privilege switching + syscall interface  
+Bulldog exposes a small, stable syscall interface used by early user‑mode code and kernel tests.  
+The current implementation is intentionally minimal: a synchronous `int 0x80` entry point, a static syscall table, and a handful of core operations (read, write, open, close, alloc, free, exit).
 
----
+This document describes:
 
-## Purpose
-
-The `feature/syscall` branch builds on the APIC baseline and introduces:
-
-- Ring 0 ↔ Ring 3 privilege switching  
-- Syscall table and dispatcher  
-- Example syscalls for user ↔ kernel transitions  
-- Contributor visibility through logging and test harnesses  
+- **Current Implementation (v0.x)** — the exact ABI and behavior implemented today  
+- **Target Model (v1.x)** — the capability‑secured, message‑based syscall architecture Bulldog is evolving toward  
+- **Migration Path** — how we get from the current model to the target model without breaking contributors or user‑mode code  
 
 ---
 
-## Privilege Switching
+# 2. Current Implementation (v0.x)
 
-### Goals
-
-- Enable execution of user‑mode code (Ring 3) while maintaining kernel‑mode (Ring 0) isolation.  
-- Provide safe transitions between privilege levels using interrupts, exceptions, and syscalls.  
-
-### Implementation Steps
-
-1. **GDT/TSS Setup**  
-   - Define separate segments for Ring 0 and Ring 3.  
-   - Configure Task State Segment (TSS) with kernel stack pointers.  
-
-2. **Stack Switching**  
-   - On privilege transitions, CPU loads the kernel stack from TSS.  
-   - Validate stack alignment for interrupt handling.  
-
-3. **Interrupt Handling**  
-   - Ensure IDT entries for syscalls and exceptions are configured with correct privilege levels.  
-   - Mask or unmask vectors as needed.  
+This section documents the syscall subsystem *as it exists today in the Bulldog kernel source tree*.  
+It is the authoritative reference for contributors implementing or modifying syscalls.
 
 ---
 
-## Syscall Model Overview
+## 2.1 Syscall Entry: `int 0x80`
 
-Bulldog’s syscall design is secure, scalable, and contributor‑friendly.  
-Applications never call raw interrupts or numeric IDs directly. Instead, they use a wrapper library that exposes clean, named functions such as `open_file()` or `spawn_process()`.
+Bulldog uses the classic x86‑64 software interrupt mechanism:
 
-### Lifecycle
+- User code triggers:  
+  ```
+  int 0x80
+  ```
+- The IDT entry for vector `0x80` is configured with:
+  - DPL = 3 (callable from user mode)
+  - handler = `syscall_handler` (naked assembly)
 
-1. **Wrapper Library (User Space)**  
-   - Validates arguments, attaches capability token, logs metadata.  
+### Register ABI
 
-2. **Dispatcher (Kernel Boundary)**  
-   - Receives request, verifies token, checks syscall table integrity, queues request.  
+On entry:
 
-3. **Worker Pool (Kernel Space)**  
-   - Executes handler under strict security policies and returns result.  
+- `rax` — syscall number  
+- `rdi` — argument 0  
+- `rsi` — argument 1  
+- `rdx` — argument 2  
 
-4. **Response Path**  
-   - Dispatcher sends result back, wrapper logs completion, application continues.  
-
-### Benefits
-
-- **Security:** Capability tokens prevent arbitrary syscall abuse.  
-- **Auditability:** Logging at both wrapper and dispatcher levels creates a clear trail.  
-- **Scalability:** Worker pool avoids one‑to‑one thread pairing overhead.  
-- **Contributor Hygiene:** Developers see a simple API while the kernel enforces strict contracts.  
-
----
-
-## Syscall Infrastructure
-
-### Dispatcher
-
-- A central syscall handler receives requests from user mode.  
-- Syscall number indexes into a syscall table.  
-
-### Syscall Table
-
-- Array of function pointers or a Rust `match` statement.  
-- Example entries:  
-  - `0x01` → framebuffer write  
-  - `0x02` → process yield  
-  - `0x03` → get system time  
-
-### Example Stub
+The handler preserves callee‑saved registers, shuffles arguments, and calls:
 
 ```rust
-pub fn syscall_dispatch(num: u64, arg1: u64, arg2: u64) -> u64 {
-    match num {
-        0x01 => framebuffer_write(arg1 as *const u8, arg2 as usize),
-        0x02 => process_yield(),
-        0x03 => system_time(),
-        _    => error_unknown_syscall(num),
-    }
+extern "C" fn rust_dispatch(num: u64, a0: u64, a1: u64, a2: u64) -> u64
+```
+
+The return value is placed in `rax` before `iretq`.
+
+---
+
+## 2.2 Syscall Table
+
+Syscalls are stored in a static table:
+
+```rust
+static SYSCALL_TABLE: [Option<SyscallFn>; 512]
+```
+
+Where:
+
+```rust
+type SyscallFn = fn(u64, u64, u64) -> u64;
+```
+
+All syscalls must conform to this 3‑argument ABI.  
+1‑argument syscalls use trampolines.
+
+### Current syscall numbers
+
+| Number | Name      | Handler                     |
+|--------|-----------|-----------------------------|
+| 1      | write     | `sys_write`                 |
+| 2      | exit      | `sys_exit_trampoline`       |
+| 3      | open      | `sys_open`                  |
+| 4      | read      | `sys_read`                  |
+| 5      | alloc     | `sys_alloc_trampoline`      |
+| 6      | free      | `sys_free_trampoline`       |
+| 7      | close     | `sys_close_trampoline`      |
+
+Unused entries are `None` and return `-ENOSYS`.
+
+---
+
+## 2.3 Error Model
+
+Bulldog uses Linux‑style errno values:
+
+- Success: return a non‑negative `u64`
+- Error: return `-(errno)` encoded as a `u64`
+
+Helpers:
+
+```rust
+err(errno)        // encode numeric errno
+err_from(Errno)   // encode typed Errno
+```
+
+`errno.rs` defines the full errno set and a `strerror()` mapping.
+
+---
+
+## 2.4 User Pointer Validation
+
+User pointers must:
+
+- be canonical  
+- lie in the lower half (`<= 0x0000_7FFF_FFFF_FFFF`)  
+- be non‑null  
+
+Helpers:
+
+- `is_user_ptr(ptr)`  
+- `copy_from_user(src, dst)`  
+- `copy_to_user(dst, src)`  
+- `copy_cstr_from_user(ptr, buf)`  
+
+These functions are used by `read`, `write`, and `open`.
+
+---
+
+## 2.5 File Descriptors
+
+Bulldog implements a simple FD table:
+
+- Global `Mutex<Option<FdTable>>` (single‑process for now)
+- FD 1 is initialized as `Stdout`
+- Usable FD range: `3..=64`
+- `fd_alloc`, `fd_get`, `fd_close` manage entries
+- `FdEntry` contains:
+  - `file: Box<dyn FileLike + Send>`
+  - `flags`
+  - `offset`
+
+### FileLike trait
+
+```rust
+trait FileLike {
+    fn read(&mut self, buf) -> Result<usize, Errno>;
+    fn write(&mut self, buf) -> Result<usize, Errno>;
+    fn close(&mut self) -> Result<(), Errno>;
+    fn seek(&mut self, offset) -> Result<(), Errno>;
 }
 ```
 
----
+Default implementations return `EBADF` or `EINVAL`.
 
-## Calling Convention
-
-- **rax** → syscall number  
-- **rdi, rsi, rdx, r10, r8, r9** → arguments (up to 6)  
-- **rax** → return value  
-- Preserve: `rbp`, `rbx`, `r12–r15` (callee‑saved)  
-- Errors returned via `rax` using negative codes  
+`Stdout` is the only built‑in implementation today.
 
 ---
 
-## Contributor Tasks & Hygiene
+## 2.6 Implemented Syscalls
 
-- Implement privilege switching logic in `arch/x86_64/syscall.rs`.  
-- Add at least one working syscall (e.g., framebuffer write).  
-- Extend logging to show syscall invocations.  
-- Document unsafe blocks with justification.  
-- Update `docs/syscall.md` whenever a new syscall is added.  
-- Test under QEMU before submitting PRs.  
-- Keep commits atomic and descriptive.  
-- Justify all `unsafe` blocks with comments explaining invariants.  
-- Align contributions with roadmap milestones.  
-- Maintain branch hygiene (tags, clean forks from APIC baseline).  
+### `write(fd, buf, len)`
+- Validates FD via `fd_get`
+- Copies user buffer → kernel scratch buffer
+- Calls `FileLike::write`
+- Returns bytes written or `-errno`
 
----
+### `read(fd, buf, len)`
+- Validates FD
+- Reads device → kernel scratch buffer
+- Copies scratch buffer → user buffer
+- Returns bytes read or `-errno`
 
-## Syscall Number Allocation Table
+### `open(path, flags, mode)`
+- Copies NUL‑terminated path from user
+- Currently always returns a `Stdout` handle
+- Allocates FD via `fd_alloc`
 
-| Number | Name       | Status        | Notes                               |
-|--------|------------|---------------|-------------------------------------|
-| 1      | sys_write  | Implemented   | Writes buffer to fd                 |
-| 2      | sys_exit   | Implemented   | Terminates process                  |
-| 3      | sys_open   | Implemented   | Opens file descriptor               |
-| 4      | sys_read   | Stub example  | Reads buffer (to be implemented)    |
-| 5–15   | Reserved   | Future use    | Suggested for core POSIX calls      |
-| 16–31  | Reserved   | Future use    | Extended Bulldog syscalls           |
-| 32+    | Experimental | Contributor proposals | Document in `docs/syscall.md` |
+### `close(fd)`
+- Removes FD from table
+- Calls `FileLike::close`
 
----
+### `alloc(size)`
+- Allocates memory via Rust global allocator
+- Returns pointer or `-ENOMEM`
 
-## Roadmap
+### `free(ptr, size)`
+- Frees memory via Rust global allocator
 
-- [x] Paging and memory management  
-- [x] Interrupt handling and IST setup  
-- [x] GDT/TSS initialization  
-- [x] APIC interrupt controller integration  
-- [ ] Privilege switching (Ring 0 ↔ Ring 3)  
-- [ ] Syscall interface and dispatcher  
-- [ ] Process scheduling  
-- [ ] User mode execution  
+### `exit(code)`
+- Logs exit code
+- Clears FD table
+- Returns (stub; real process teardown not implemented)
 
 ---
 
-## Branching Context
+# 3. Target Model (v1.x): Capability‑Secured Syscalls
 
-- `main` → APIC baseline (stable kernel)  
-- `feature/pic8259` → legacy PIC baseline  
-- `feature/apic` → APIC milestone  
-- `feature/syscall` → privilege switching + syscall development  
+The long‑term design replaces the synchronous, register‑based ABI with a **capability‑secured, message‑based syscall architecture**.
 
----
-
-## Milestone Success Criteria
-
-- Syscall handler registered at vector `0x80`  
-- Entry trigger logs dispatch correctly  
-- Returns cleanly to caller  
-- At least one syscall implemented and documented  
+This section describes the intended model.
 
 ---
 
-## License
+## 3.1 Goals
 
-MIT or Apache 2.0 — TBD.  
-Final license choice will be documented before the v0.1 release.  
-Contributions welcome under either license.
+- Strong security via **capability tokens**
+- Uniform **SyscallMessage** format
+- **Dispatcher** validates capabilities and arguments
+- **Worker thread pool** executes syscalls asynchronously
+- **Audit logging** for every syscall
+- **Per‑process FD tables** with capability‑bound handles
+- **Memory capabilities** instead of raw pointers
+- **Zero‑copy I/O** where possible
+- **User‑space wrapper library** providing safe Rust APIs
 
 ---
 
-## Disclaimer
+## 3.2 SyscallMessage
 
-Bulldog and its subsystems (syscalls, APIC, PIC8259, paging, and related features)  
-are experimental and provided “as is” without warranty of any kind.  
-They are intended for research, learning, and contributor experimentation.  
-Running Bulldog on real hardware may expose quirks or limitations.  
-Use at your own risk.  
-By contributing or running Bulldog, you agree to abide by the project license.
+All syscalls become structured messages:
+
+```rust
+struct SyscallMessage {
+    num: u64,
+    args: [u64; 3],
+    capability: CapabilityToken,
+    pid: u64,
+    tid: u64,
+    timestamp: u64,
+}
+```
+
+Messages are placed into a syscall queue.
+
+---
+
+## 3.3 Capability Tokens
+
+Every syscall requires a capability token describing:
+
+- allowed operations (read/write/seek/open/close/alloc/free/exit)
+- resource identity (FD, memory region, path)
+- rights (read/write/execute)
+- lifetime and revocation
+
+Capabilities are validated by the dispatcher before a syscall is enqueued.
+
+---
+
+## 3.4 Worker Thread Pool
+
+Syscalls are executed by kernel worker threads:
+
+- dequeue message  
+- validate arguments  
+- call handler  
+- produce structured response  
+- log audit entry  
+
+This enables:
+
+- concurrency  
+- isolation  
+- scheduling fairness  
+- future async I/O  
+
+---
+
+## 3.5 Wrapper Library
+
+User‑space code will not call `int 0x80` directly.  
+Instead, it will use a safe Rust API:
+
+```rust
+let fd = bulldog::open("/dev/tty", OpenFlags::Write)?;
+bulldog::write(fd, b"hello")?;
+```
+
+The wrapper library:
+
+- constructs `SyscallMessage`
+- attaches capability tokens
+- handles responses
+- provides ergonomic Rust types
+
+---
+
+# 4. Migration Path
+
+This section describes how Bulldog evolves from the current model to the target model without breaking contributors.
+
+---
+
+## Phase 1 — Document and Stabilize (current)
+
+- Document current ABI (this file)
+- Ensure all syscalls follow consistent patterns
+- Add syscall tracing and logging
+- Add tests for existing syscalls
+
+---
+
+## Phase 2 — Introduce SyscallMessage
+
+- Add message struct
+- Add syscall queue
+- Add dispatcher validation layer
+- Keep existing synchronous handlers as worker functions
+
+---
+
+## Phase 3 — Add Capability Tokens
+
+- Introduce capability types
+- Wrap FD entries in capability metadata
+- Wrap memory regions in capabilities
+- Update dispatcher to enforce capability checks
+
+---
+
+## Phase 4 — Add Worker Thread Pool
+
+- Move syscall execution off the interrupt path
+- Add worker threads
+- Add structured responses
+- Add audit logging
+
+---
+
+## Phase 5 — Replace Raw Pointers and FDs
+
+- Replace raw pointers with memory capabilities
+- Replace numeric FDs with capability‑bound handles
+- Introduce real VFS
+- Implement real process teardown
+
+---
+
+## Phase 6 — Deprecate `int 0x80`
+
+- Introduce `syscall/sysret` fast path
+- Keep `int 0x80` for compatibility
+- Migrate wrapper library to new entry mechanism
+
+---
+
+# 5. Contributing New Syscalls
+
+Until the capability model is implemented, contributors should:
+
+1. Add a syscall number in `stubs.rs`
+2. Add the handler to `table.rs`
+3. Implement the syscall in its own module
+4. Use:
+   - `fd_get`, `fd_alloc`, `fd_close`
+   - `copy_from_user`, `copy_to_user`
+   - `err`, `err_from`
+5. Add logging
+6. Add tests under `feature = "syscall_tests"`
+
+When the capability model lands, this section will be updated.
+
+---
+
+# 6. Appendix: Current Syscall ABI Summary
+
+### Entry mechanism  
+`int 0x80`
+
+### Registers  
+`rax = num`, `rdi = arg0`, `rsi = arg1`, `rdx = arg2`
+
+### Return  
+`rax = result or -(errno)`
+
+### Table size  
+512 entries
+
+### Implemented syscalls  
+write, read, open, close, alloc, free, exit
+
+---
+
+# End of Document

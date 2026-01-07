@@ -1,155 +1,192 @@
-# Bulldog Kernel – Syscall Table Example
+# Bulldog Kernel – Syscall Table
 
-This document shows how Bulldog wires syscall numbers to stub functions.  
-Contributors can use this as a reference when adding new syscalls.
-
----
-
-## Syscall Numbers
-
-- **1 → `sys_write`**  
-- **2 → `sys_exit`**  
-- **3 → `sys_open`**  
-- **4 → `sys_read`** (stub example, not yet implemented)
+This document describes how Bulldog wires syscall numbers to their handlers, how the static syscall table is initialized, and how contributors should add new syscalls.  
+It reflects the **current, real implementation** in `kernel/src/syscall/table.rs`, not the older stub‑based example.
 
 ---
 
-## Table Implementation
+# 1. Overview
+
+Bulldog uses a **static syscall table** with **512 entries**, indexed directly by syscall number.  
+Each entry is either:
+
+- `Some(handler_fn)` — a valid syscall handler  
+- `None` — unimplemented, returns `-ENOSYS`  
+
+All syscall handlers use the uniform 3‑argument ABI:
+
+```rust
+fn(u64, u64, u64) -> u64
+```
+
+1‑argument syscalls (e.g., `exit`, `alloc`, `free`, `close`) use **trampolines** that adapt the 3‑argument ABI to the real function signature.
+
+---
+
+# 2. Syscall Number Allocation
+
+These are the syscall numbers currently implemented in Bulldog:
+
+| Number | Name   | Handler Function           | Notes |
+|--------|--------|----------------------------|-------|
+| 1      | write  | `sys_write`                | FD write |
+| 2      | exit   | `sys_exit_trampoline`      | Process exit (stub) |
+| 3      | open   | `sys_open`                 | Returns FD |
+| 4      | read   | `sys_read`                 | FD read |
+| 5      | alloc  | `sys_alloc_trampoline`     | Allocates memory |
+| 6      | free   | `sys_free_trampoline`      | Frees memory |
+| 7      | close  | `sys_close_trampoline`     | Closes FD |
+
+All other entries (8–511) are currently unassigned.
+
+---
+
+# 3. Static Table Implementation
+
+The real syscall table lives in `kernel/src/syscall/table.rs` and looks like this:
 
 ```rust
 // File: kernel/src/syscall/table.rs
 
-use crate::syscall::stubs::{
-    SYS_WRITE, SYS_EXIT, SYS_OPEN, SYS_READ,
-    sys_write, sys_exit, sys_open, sys_read,
-    SyscallFn,
+use crate::syscall::stubs::*;
+use crate::syscall::write::sys_write;
+use crate::syscall::read::sys_read;
+use crate::syscall::open::sys_open;
+use crate::syscall::close::sys_close_trampoline;
+use crate::syscall::exit::sys_exit_trampoline;
+use crate::syscall::alloc::sys_alloc_trampoline;
+use crate::syscall::free::sys_free_trampoline;
+
+pub static SYSCALL_TABLE: [Option<SyscallFn>; 512] = {
+    let mut table: [Option<SyscallFn>; 512] = [None; 512];
+
+    table[SYS_WRITE as usize] = Some(sys_write);
+    table[SYS_EXIT  as usize] = Some(sys_exit_trampoline);
+    table[SYS_OPEN  as usize] = Some(sys_open);
+    table[SYS_READ  as usize] = Some(sys_read);
+    table[SYS_ALLOC as usize] = Some(sys_alloc_trampoline);
+    table[SYS_FREE  as usize] = Some(sys_free_trampoline);
+    table[SYS_CLOSE as usize] = Some(sys_close_trampoline);
+
+    table
 };
-
-/// Lookup table mapping syscall numbers to stub functions.
-pub fn lookup(num: u64) -> Option<SyscallFn> {
-    match num {
-        SYS_WRITE => Some(sys_write),
-        SYS_EXIT  => Some(sys_exit),
-        SYS_OPEN  => Some(sys_open),
-        SYS_READ  => Some(sys_read),
-        _ => None,
-    }
-}
-
-/// Fallback for unknown syscalls.
-pub fn unknown(num: u64) -> u64 {
-    log::warn!("Unknown syscall num={} invoked", num);
-    u64::MAX // error code
-}
 ```
+
+This table is constructed at compile time and never mutated at runtime.
 
 ---
 
-## Expected Output
+# 4. Syscall Dispatch Path
 
-```
-[INFO] Syscall handler initialized at vector 0x80
-[INFO] Syscall ready
-[INFO] sys_write (fd=1, ptr=0x1, len=1)
-hello bulldog
-[INFO] syscall num=1 ret=0
-```
-
----
-
-## Stub Template Example – `sys_read`
-
-To add a new syscall such as `sys_read`, follow these steps:
-
-### 1. Define the constant in `stubs.rs`
+The syscall entry point (`int 0x80`) eventually calls:
 
 ```rust
-// File: kernel/src/syscall/stubs.rs
-
-pub const SYS_READ: u64 = 4; // next available syscall number
-
-/// Syscall function signature: (arg1, arg2, arg3) -> u64
-pub type SyscallFn = fn(u64, u64, u64) -> u64;
-
-/// Example stub for sys_read
-pub fn sys_read(fd: u64, ptr: u64, len: u64) -> u64 {
-    log::info!(
-        "sys_read (fd={}, ptr={:#x}, len={})",
-        fd, ptr, len
-    );
-
-    // For now, return 0 to indicate success.
-    // Later, implement actual read semantics in read.rs.
-    0
-}
+rust_dispatch(num, a0, a1, a2)
 ```
 
-### 2. Extend the lookup table in `table.rs`
+Which performs:
+
+1. Bounds check (`num < 512`)
+2. Table lookup
+3. If entry is `None`: return `-ENOSYS`
+4. Otherwise call the handler
+
+Handlers return:
+
+- `>= 0` on success  
+- `-(errno)` on failure  
+
+---
+
+# 5. Trampolines
+
+Some syscalls take fewer than 3 arguments.  
+To maintain a uniform ABI, Bulldog uses trampolines:
+
+Example: `sys_exit(code: u64)`
 
 ```rust
-// File: kernel/src/syscall/table.rs
-
-use crate::syscall::stubs::{
-    SYS_WRITE, SYS_EXIT, SYS_OPEN, SYS_READ,
-    sys_write, sys_exit, sys_open, sys_read,
-    SyscallFn,
-};
-
-pub fn lookup(num: u64) -> Option<SyscallFn> {
-    match num {
-        SYS_WRITE => Some(sys_write),
-        SYS_EXIT  => Some(sys_exit),
-        SYS_OPEN  => Some(sys_open),
-        SYS_READ  => Some(sys_read),
-        _ => None,
-    }
+pub fn sys_exit_trampoline(code: u64, _a1: u64, _a2: u64) -> u64 {
+    sys_exit(code)
 }
 ```
 
-### 3. Document expected behavior
-
-- `sys_read(fd, ptr, len)` should attempt to read `len` bytes from file descriptor `fd` into buffer at `ptr`.  
-- For now, the stub logs the call and returns `0`.  
-- Once `read.rs` is implemented, update the stub to delegate to the real handler.
+This keeps the syscall table simple and consistent.
 
 ---
 
-## Example Output (stub mode)
+# 6. Adding a New Syscall
+
+To add a new syscall:
+
+### Step 1 — Assign a number in `stubs.rs`
+
+```rust
+pub const SYS_FOO: u64 = 8;
+```
+
+### Step 2 — Implement the handler
+
+Create `kernel/src/syscall/foo.rs`:
+
+```rust
+pub fn sys_foo(a0: u64, a1: u64, a2: u64) -> u64 {
+    // implementation
+}
+```
+
+If your syscall takes fewer than 3 arguments, add a trampoline.
+
+### Step 3 — Register it in the table
+
+In `table.rs`:
+
+```rust
+table[SYS_FOO as usize] = Some(sys_foo);
+```
+
+### Step 4 — Document it
+
+Add an entry to:
+
+- `docs/syscall.md`  
+- `docs/syscall-table.md`  
+
+---
+
+# 7. Syscall Number Allocation Table
+
+| Range     | Purpose                         |
+|-----------|---------------------------------|
+| 1–15      | Core Bulldog syscalls           |
+| 16–31     | Extended kernel syscalls        |
+| 32–255    | Future VFS, process, IPC        |
+| 256–511   | Experimental / contributor use  |
+
+Contributors should avoid collisions by updating this table when adding new syscalls.
+
+---
+
+# 8. Example Logging Output
 
 ```
-[INFO] sys_read (fd=0, ptr=0x1000, len=16)
-[INFO] syscall num=4 ret=0
+[INFO] syscall: num=1 write(fd=1, ptr=0x1000, len=5)
+hello
+[INFO] syscall: num=1 ret=5
 ```
 
 ---
 
-## Syscall Number Allocation Table
+# 9. Summary
 
-| Number | Name       | Status        | Notes                          |
-|--------|------------|---------------|--------------------------------|
-| 1      | sys_write  | Implemented   | Writes buffer to fd            |
-| 2      | sys_exit   | Implemented   | Terminates process             |
-| 3      | sys_open   | Implemented   | Opens file descriptor          |
-| 4      | sys_read   | Stub example  | Reads buffer (to be implemented) |
-| 5–15   | Reserved   | Future use    | Suggested for core POSIX calls |
-| 16–31  | Reserved   | Future use    | Extended Bulldog syscalls       |
-| 32+    | Experimental | Contributor proposals | Document in `docs/syscall.md` |
+- Bulldog uses a **static 512‑entry syscall table**  
+- All syscalls use a **uniform 3‑argument ABI**  
+- **Trampolines** adapt 1‑argument syscalls  
+- Unimplemented syscalls return **-ENOSYS**  
+- Contributors must update both the table and documentation  
+
+This document is the authoritative reference for syscall number allocation and table wiring.
 
 ---
 
-## Contributor Notes
-
-- Add new syscall numbers as constants in `stubs.rs`.  
-- Implement the stub function with the signature `(u64, u64, u64) -> u64`.  
-- Extend the lookup match in `table.rs` to route the new number.  
-- Document expected behavior in `docs/syscall.md` so others can follow.  
-- Logging hygiene: Ensure each syscall logs entry, arguments, and return value.  
-- Error handling: Unknown syscalls should always route through `unknown()`.  
-- Number allocation: Use the table above to avoid collisions.
-
----
-
-## Roadmap Context
-
-This table provides a clear baseline for expanding Bulldog’s syscall harness.  
-It is the foundation for building out the syscall dispatcher and eventually user‑mode execution.
+# End of Document

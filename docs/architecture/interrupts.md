@@ -1,240 +1,273 @@
-# Bulldog Kernel – Interrupts and Exception Handling
+# Bulldog Kernel – Interrupts and Exceptions (Current Implementation)
 
-This document describes Bulldog’s interrupt architecture, including the IDT, exception
-handling, APIC configuration, vector hygiene, and early interrupt setup. It provides
-contributors with a clear understanding of how interrupts flow through the system and how
-they interact with privilege switching and syscalls.
+> **Disclaimer:**  
+> This document describes Bulldog’s *current* interrupt and exception implementation as it exists in the code today.  
+> It does **not** cover future plans for user‑mode, IOAPIC, hardware IRQ remapping, or SMP.  
+> Syscalls are handled via a dedicated syscall subsystem, not via `int 0x80`.  
+>  
+> For related subsystems, see:  
+> - `gdt.md` (TSS, IST stacks)  
+> - `apic.md` (LAPIC and timer)  
+> - `memory.md` (paging, direct map)  
+> - `kernel_init.md` (initialization sequence)  
+> - `syscall.md` (once implemented)
 
-Bulldog targets the `x86_64-bulldog` architecture and uses the APIC model for interrupt
-delivery.
-
----
-
-## Overview
-
-Bulldog’s interrupt subsystem is built around the following principles:
-
-- Deterministic vector layout  
-- Clean separation between exceptions, interrupts, and syscalls  
-- APIC‑based interrupt delivery  
-- Per‑CPU LAPIC timer configuration  
-- Safe entry/exit paths with stack switching  
-- Contributor‑friendly logging and debugging  
-
-Interrupts are central to privilege switching, syscalls, scheduling, and future process
-management.
+This document reflects the behavior of `interrupts.rs` as it is implemented today.
 
 ---
 
-## Interrupt Descriptor Table (IDT)
+# 1. Overview
 
-The IDT defines the entry points for:
+Bulldog’s interrupt subsystem currently provides:
 
-- CPU exceptions  
-- Hardware interrupts  
-- Software interrupts (including syscalls)  
+- A statically allocated, global IDT  
+- Handlers for all standard CPU exceptions  
+- IST‑backed handlers for page faults and double faults  
+- A LAPIC timer interrupt on a dedicated vector  
+- A spurious interrupt handler  
+- Default handlers for all unassigned vectors  
+- Explicit skipping of the syscall vector for integration with the syscall subsystem  
 
-Each entry contains:
-
-- Handler address  
-- Segment selector  
-- Gate type (interrupt/trap)  
-- Descriptor privilege level (DPL)  
-- IST index (optional)  
-
-Bulldog uses interrupt gates for all entries to ensure `RFLAGS.IF` is cleared on entry.
+The legacy PIC is disabled early in `kernel_init`, and the LAPIC is used as the primary interrupt source.
 
 ---
 
-## Vector Layout
+# 2. Interrupt Descriptor Table (IDT)
 
-Bulldog maintains a clean, predictable vector layout:
+The IDT is stored in a global cell with interior mutability:
 
-```
-0x00–0x1F  → CPU exceptions
-0x20–0x2F  → Hardware IRQs (remapped PIC legacy range)
-0x30–0x3F  → LAPIC timer and APIC-specific interrupts
-0x80       → Primary syscall vector (INT 0x80)
-0x81–0x8F  → Reserved for future syscalls
-0x90–0xFF  → Reserved / future expansion
+```rust
+struct IdtCell(UnsafeCell<InterruptDescriptorTable>);
+static IDT: IdtCell = IdtCell(UnsafeCell::new(InterruptDescriptorTable::new()));
 ```
 
-This layout ensures:
+Access helpers:
 
-- Exceptions remain at their architectural vector numbers  
-- Hardware IRQs are remapped away from 0x00–0x1F  
-- Syscalls occupy a dedicated, non‑overlapping range  
-- Future expansion is predictable  
+- `idt_ref() -> &'static InterruptDescriptorTable`  
+- `idt_mut() -> &'static mut InterruptDescriptorTable`  
 
----
+`init_idt()`:
 
-## Exception Handling
+- Runs inside `interrupts::without_interrupts(...)`  
+- Initializes all standard CPU exception entries  
+- Installs IST‑backed entries for page fault and double fault  
+- Installs LAPIC timer and spurious handlers  
+- Installs a few custom debug vectors  
+- Fills remaining unset entries with a default handler (excluding syscall vector and some reserved exceptions)  
+- Logs selected vectors for debugging  
+- Loads the IDT (`lidt`) at the end
 
-Exceptions include:
-
-- Divide‑by‑zero  
-- Page faults  
-- General protection faults  
-- Invalid opcode  
-- Double faults  
-
-Bulldog’s exception handlers:
-
-- Log the exception type  
-- Log relevant registers  
-- Halt the CPU for fatal conditions  
-- Use IST entries for critical exceptions (e.g., double fault)  
-
-Example exception flow:
-
-```
-CPU exception
-    ↓
-IDT entry (DPL=0)
-    ↓
-Kernel stack (via TSS)
-    ↓
-Exception handler
-    ↓
-Log + halt or recover
-```
+This design ensures IDT mutation is safe and deterministic.
 
 ---
 
-## APIC and LAPIC
+# 3. Vector Usage (Current Layout)
 
-Bulldog uses the APIC model for interrupt delivery:
+## 3.1 Key vectors
 
-- IOAPIC handles external hardware interrupts  
-- LAPIC handles per‑CPU interrupts, including the timer  
+- **CPU exceptions:** 0x00–0x1F (standard architectural vectors)  
+- **LAPIC timer:**  
+  ```rust
+  pub const LAPIC_TIMER_VECTOR: u8 = 0x31;
+  ```  
+- **Spurious LAPIC interrupt:**  
+  ```rust
+  const SPURIOUS_VECTOR: u8 = 0xFF;
+  ```  
+- **Syscall vector:**  
+  Defined in the syscall subsystem as `SYSCALL_VECTOR`.  
+  The IDT initialization **skips** installing a default handler for this vector so the syscall subsystem can own it.
 
-### LAPIC Timer
+## 3.2 Custom debug vectors
 
-The LAPIC timer is used for:
+Bulldog currently installs diagnostic handlers for:
 
-- Preemption (future)  
-- Timekeeping  
-- Scheduling (future)  
+- Vector 32 → `log_vector_32`  
+- Vector 33 → `log_vector_33`  
+- Vector 48 → `unhandled_vector_48`  
+- Vector 50 → `log_vector_50`  
+- Vector 255 → `unhandled_vector_255`  
 
-Configuration steps:
+These are used for testing and debugging.
 
-1. Map LAPIC registers  
-2. Set divide configuration  
-3. Load initial count  
-4. Enable timer interrupt vector  
+## 3.3 Default handlers
+
+For all other vectors (0–255), `init_idt()`:
+
+```rust
+for i in 0..256 {
+    let skip = i == 8
+        || (10..=15).contains(&i)
+        || (17..=18).contains(&i)
+        || (21..=27).contains(&i)
+        || (29..=31).contains(&i)
+        || i == LAPIC_TIMER_VECTOR as usize
+        || i == SYSCALL_VECTOR as usize;
+
+    if skip || idt[i].handler_addr().as_u64() != 0 {
+        continue;
+    }
+
+    unsafe {
+        idt[i].set_handler_fn(default_handler);
+    }
+}
+```
+
+`default_handler` logs `"UNHANDLED INTERRUPT"`.
 
 ---
 
-## Interrupt Entry Path
+# 4. IST Usage and Critical Exceptions
 
-When an interrupt occurs:
+The IDT integrates with the TSS and IST stacks defined in `gdt.rs` / `stack.rs`.
 
-1. CPU pushes `RIP`, `CS`, `RFLAGS`  
-2. If privilege level changes, CPU pushes `SS` and `RSP`  
-3. CPU loads kernel stack from TSS  
-4. IDT entry transfers control to the handler  
-5. Handler saves general‑purpose registers  
-6. Handler processes the interrupt  
-7. Registers are restored  
-8. `iretq` returns to the interrupted context  
+## 4.1 IST indices
 
-Diagram:
+- `DOUBLE_FAULT_IST_INDEX` → IST entry for **double faults**  
+- `LAPIC_IST_INDEX` → IST entry for **page faults** and **LAPIC timer**
 
-```
-User Mode (Ring 3)
-    |
-    | interrupt / exception / int 0x80
-    v
-CPU pushes frame
-CPU loads kernel RSP from TSS
-    |
-    v
-Kernel Mode (Ring 0)
-    |
-    | handler
-    v
-iretq
-    |
-    v
-User Mode (Ring 3)
+## 4.2 IST‑backed entries
+
+In `init_idt()`:
+
+```rust
+unsafe {
+    idt.page_fault
+        .set_handler_fn(page_fault_handler)
+        .set_stack_index(LAPIC_IST_INDEX);
+
+    idt.double_fault
+        .set_handler_fn(double_fault_handler)
+        .set_stack_index(DOUBLE_FAULT_IST_INDEX);
+
+    idt[LAPIC_TIMER_VECTOR as usize]
+        .set_handler_fn(lapic_timer_handler)
+        .set_stack_index(LAPIC_IST_INDEX);
+
+    idt[SPURIOUS_VECTOR as usize].set_handler_fn(spurious_handler);
+}
 ```
 
-This path is shared with syscalls, which use vector `0x80`.
+## 4.3 Exception behavior
 
----
+Handlers for exceptions such as:
 
-## Interrupt Stack Table (IST)
-
-Bulldog reserves IST entries for:
-
+- Divide error  
+- Debug  
+- NMI  
+- Page fault  
 - Double fault  
-- Non‑maskable interrupt (NMI)  
-- Machine check (future)  
+- Invalid opcode  
+- General protection fault  
+- Alignment check  
+- Machine check  
+- SIMD floating point  
+- Virtualization  
+- Security  
 
-IST ensures these critical exceptions have a known‑good stack even if the main kernel stack
-is corrupted.
+…all:
+
+- Log the exception name  
+- Log the `InterruptStackFrame`  
+- For faults with error codes, log the error code  
+- `panic!` for all fatal conditions  
+
+`page_fault_handler` additionally logs CR2 (faulting address) and the `PageFaultErrorCode`.
+
+There is no recovery path yet; all serious exceptions are fatal, which is appropriate for early kernel development.
 
 ---
 
-## Hardware IRQ Handling
+# 5. LAPIC Timer and Spurious Interrupts
 
-Bulldog remaps legacy PIC IRQs to APIC vectors:
+## 5.1 LAPIC timer handler
 
+The LAPIC timer interrupt is handled by:
+
+```rust
+extern "x86-interrupt" fn lapic_timer_handler(_stack_frame: InterruptStackFrame) {
+    tick();
+    send_eoi();
+}
 ```
-IRQ0 → 0x20  (timer)
-IRQ1 → 0x21  (keyboard)
-...
-IRQ15 → 0x2F
+
+Behavior:
+
+- `tick()` updates the kernel time/tick subsystem  
+- `send_eoi()` sends EOI to the LAPIC  
+
+The handler:
+
+- Does **not** log on every tick (to avoid log spam)  
+- Does **not** panic  
+- Runs on IST1 (`LAPIC_IST_INDEX`) for robustness
+
+## 5.2 Spurious interrupt handler
+
+Spurious interrupts use vector `SPURIOUS_VECTOR` (0xFF):
+
+```rust
+extern "x86-interrupt" fn spurious_handler(_stack_frame: InterruptStackFrame) {
+    error!("SPURIOUS INTERRUPT");
+    send_eoi();
+}
 ```
 
-IRQ handlers:
+Behavior:
 
-- Acknowledge the LAPIC/IOAPIC  
-- Perform minimal work  
-- Defer heavy processing to future scheduling subsystems  
-
----
-
-## Syscall Interaction
-
-Syscalls use vector `0x80` with:
-
-- DPL = 3 (user‑callable)  
-- Interrupt gate (clears IF)  
-- Kernel stack switching via TSS  
-
-Syscall entry shares the same interrupt path as hardware IRQs, ensuring consistent behavior.
-
-See:  
-`../syscall.md`  
-`../privilege-switching.md`  
-`../syscall-harness-guide.md`
+- Logs the spurious interrupt  
+- Sends EOI to clear the LAPIC state  
 
 ---
 
-## Logging and Debugging
+# 6. Syscall Vector Integration
 
-Interrupt handlers log:
+Bulldog’s syscalls are **not** implemented via `int 0x80`.  
+Instead:
 
-- Vector number  
-- Error code (if present)  
-- CS, SS, RSP, RFLAGS  
-- Register snapshot (optional)  
+- The syscall subsystem defines a `SYSCALL_VECTOR`  
+- `init_idt()` explicitly skips installing a default handler for `SYSCALL_VECTOR`:
 
-This logging is essential during early development and debugging.
+```rust
+|| i == SYSCALL_VECTOR as usize
+```
 
----
+This ensures:
 
-## Contributor Notes
+- The syscall subsystem can install its own handler (or use SYSCALL/SYSRET)  
+- The interrupt layer does not interfere with syscall behavior  
 
-- Maintain vector hygiene when adding new handlers  
-- Ensure all IDT entries use correct DPL and gate types  
-- Validate IST usage for critical exceptions  
-- Keep logs deterministic for debugging and test harness integration  
-- Avoid long‑running work inside interrupt handlers  
+The exact syscall entry mechanics are documented in `syscall.md` (once completed).
 
 ---
 
-## License
+# 7. Logging and Debugging
 
-MIT or Apache 2.0 — to be determined.
+The interrupt subsystem logs:
+
+- Exception type and name  
+- `InterruptStackFrame` (registers and CS/RIP/RSP/RFLAGS)  
+- Error codes where applicable (e.g., page fault, GPF, alignment check)  
+- Faulting address for page faults (CR2)  
+- Selected IDT entries’ handler addresses during initialization  
+- Spurious and unhandled interrupts  
+
+This logging is critical for early bring‑up and debugging.
+
+---
+
+# 8. Contributor Notes
+
+- `init_idt()` must be called before enabling interrupts  
+- IST indices must match the TSS configuration in `gdt.rs`  
+- The LAPIC timer handler **must** call `send_eoi()`  
+- Do not install handlers on `SYSCALL_VECTOR` in `interrupts.rs`; the syscall subsystem owns it  
+- Avoid heavy work in interrupt handlers; keep them short and deterministic  
+- When adding new vectors, document them here and maintain clear separation of concerns  
+
+---
+
+# License
+
+MIT or Apache 2.0 — TBD.
