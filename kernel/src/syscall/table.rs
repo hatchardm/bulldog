@@ -50,7 +50,7 @@ const fn init_table() -> [Option<SyscallFn>; SYSCALL_TABLE_SIZE] {
     t
 }
 
-static SYSCALL_TABLE: [Option<SyscallFn>; SYSCALL_TABLE_SIZE] = init_table();
+pub static SYSCALL_TABLE: [Option<SyscallFn>; SYSCALL_TABLE_SIZE] = init_table();
 
 #[inline]
 pub fn lookup(num: u64) -> Option<SyscallFn> {

@@ -303,6 +303,9 @@ pub enum Errno {
     EINVAL,
     EMFILE,
     ENOSYS,
+    ENOTDIR,
+    EEXIST,
+
 }
 
 impl Errno {
@@ -317,6 +320,8 @@ impl Errno {
             Errno::EINVAL  => EINVAL,
             Errno::EMFILE  => EMFILE,
             Errno::ENOSYS  => ENOSYS,
+            Errno::ENOTDIR => ENOTDIR,
+            Errno::EEXIST  => EEXIST,
         }
     }
 }

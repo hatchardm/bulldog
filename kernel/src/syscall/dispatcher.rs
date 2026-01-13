@@ -70,7 +70,11 @@ pub fn init_syscall() {
     let mut idt = crate::interrupts::idt_mut();
     unsafe {
         idt[SYSCALL_VECTOR as usize]
-            .set_handler_fn(core::mem::transmute::<extern "C" fn(), extern "x86-interrupt" fn(InterruptStackFrame)>(syscall_handler))
+            .set_handler_fn(
+                core::mem::transmute::<extern "C" fn(), extern "x86-interrupt" fn(InterruptStackFrame)>(
+                    syscall_handler,
+                ),
+            )
             .set_privilege_level(PrivilegeLevel::Ring3);
     }
     info!(
@@ -78,7 +82,5 @@ pub fn init_syscall() {
         SYSCALL_VECTOR
     );
 }
-
-
 
 
