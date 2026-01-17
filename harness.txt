@@ -13,34 +13,34 @@ TRACE: exiting boot services
 TRACE: switching to new level 4 table
 INFO : New page table at: PhysFrame[4KiB](0x101000)
 INFO : Elf file loaded at Pointer {
-    addr: 0x000000001e493000,
-    metadata: 1730360,
+    addr: 0x000000001e482000,
+    metadata: 1801104,
 }
 INFO : virtual_address_offset: 0x8000000000
-INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(4), offset: 0, virtual_addr: 0, physical_addr: 0, file_size: 3beb0, mem_size: 3beb0, align: 1000 })
-INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(5), offset: 3beb0, virtual_addr: 3ceb0, physical_addr: 3ceb0, file_size: 3875c, mem_size: 3875c, align: 1000 })
-INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(6), offset: 74610, virtual_addr: 76610, physical_addr: 76610, file_size: d330, mem_size: d9f0, align: 1000 })
+INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(4), offset: 0, virtual_addr: 0, physical_addr: 0, file_size: 3d608, mem_size: 3d608, align: 1000 })
+INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(5), offset: 3d610, virtual_addr: 3e610, physical_addr: 3e610, file_size: 4131c, mem_size: 4131c, align: 1000 })
+INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(6), offset: 7e930, virtual_addr: 80930, physical_addr: 80930, file_size: dd28, mem_size: e6d0, align: 1000 })
 INFO : Mapping bss section
-INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(6), offset: 81940, virtual_addr: 84940, physical_addr: 84940, file_size: 21040, mem_size: 29230, align: 1000 })
+INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(6), offset: 8c660, virtual_addr: 8f660, physical_addr: 8f660, file_size: 21040, mem_size: 29230, align: 1000 })
 INFO : Mapping bss section
-INFO : Entry point at: 0x800003e000
-INFO : Creating GDT at PhysAddr(0x13b000)
+INFO : Entry point at: 0x800003f740
+INFO : Creating GDT at PhysAddr(0x13c000)
 INFO : Map framebuffer
 INFO : Map physical memory
 INFO : Allocate bootinfo
 INFO : Create Memory Map
 INFO : Create bootinfo
-INFO : Jumping to kernel entry point at VirtAddr(0x800003e000)
+INFO : Jumping to kernel entry point at VirtAddr(0x800003f740)
 [INFO] Logger initialized at Info level
 [INFO] Exited logger_init
 [INFO] Framebuffer format: Bgr, size: 1024x768
 [INFO] Glyph 'A' width=7 height=16
 [INFO] Entered init_heap
-[INFO] IDT[48] handler address: 0x8000054500
-[INFO] IDT[49] handler address: 0x80000544d0
-[INFO] IDT[50] handler address: 0x8000053960
+[INFO] IDT[48] handler address: 0x8000056da0
+[INFO] IDT[49] handler address: 0x8000056d70
+[INFO] IDT[50] handler address: 0x8000056200
 [INFO] Syscall handler initialized at vector 0x80 (DPL=3)
-[INFO] dispatch called with num=1 a0=0x1 a1=0x80000389ce a2=0x14
+[INFO] dispatch called with num=1 a0=0x1 a1=0x800003a2ed a2=0x14
 [INFO] [STDOUT] Hello from harness!
 
 [INFO] syscall num=1 ret=20
@@ -48,277 +48,302 @@ INFO : Jumping to kernel entry point at VirtAddr(0x800003e000)
 [INFO] dispatch called with num=1 a0=0x1 a1=0xffffffffffffffff a2=0x8
 [INFO] syscall num=1 ret=18446744073709551602
 [INFO] [HARNESS] call=sys_write case=bogus_ptr ret=-14 (EFAULT) [raw=18446744073709551602]
-[INFO] dispatch called with num=1 a0=0x63 a1=0x8000013ebb a2=0x6
+[INFO] dispatch called with num=1 a0=0x63 a1=0x8000015467 a2=0x6
 [INFO] syscall num=1 ret=18446744073709551607
 [INFO] [HARNESS] call=sys_write case=invalid_fd ret=-9 (EBADF) [raw=18446744073709551607]
-[INFO] dispatch called with num=1 a0=0x0 a1=0x8000012fa6 a2=0x7
+[INFO] dispatch called with num=1 a0=0x0 a1=0x8000014508 a2=0x7
 [INFO] syscall num=1 ret=18446744073709551607
 [INFO] [HARNESS] call=sys_write case=stdin_fd0 ret=-9 (EBADF) [raw=18446744073709551607]
-[INFO] dispatch called with num=1 a0=0x1 a1=0x8000013ebb a2=0x0
+[INFO] dispatch called with num=1 a0=0x1 a1=0x8000015467 a2=0x0
 [INFO] syscall num=1 ret=0
 [INFO] [HARNESS] call=sys_write case=zero_len ret=0
-[INFO] dispatch called with num=1 a0=0x1 a1=0x8000013ebb a2=0xffffffff
+[INFO] dispatch called with num=1 a0=0x1 a1=0x8000015467 a2=0xffffffff
 [INFO] [STDOUT] <invalid utf8>
 [INFO] syscall num=1 ret=4096
 [INFO] [HARNESS] call=sys_write case=huge_len ret=4096
-[INFO] dispatch called with num=3 a0=0x800001416e a1=0x0 a2=0x0
-[INFO] [OPEN] path="foo.txt" flags=0 → fd=3
+[INFO] dispatch called with num=3 a0=0x80000144d3 a1=0x0 a2=0x0
+[INFO] [OPEN][VFS] path="/vfs/etc/hostname" → fd=3
 [INFO] syscall num=3 ret=3
 [INFO] [HARNESS] call=sys_open case=happy ret=3
+[INFO] dispatch called with num=4 a0=0x3 a1=0x10000010550 a2=0x10
+[INFO] syscall num=4 ret=8
+[INFO] [HARNESS] call=sys_read case=happy ret=8
+[INFO] dispatch called with num=3 a0=0x8000015bf9 a1=0x0 a2=0x0
+[INFO] [OPEN][VFS] path="/vfs/var/log/test_write.txt" → fd=4
+[INFO] syscall num=3 ret=4
+[INFO] [HARNESS] call=sys_open case=write_test_open ret=4
+[INFO] dispatch called with num=1 a0=0x4 a1=0x800003a397 a2=0x5
+[INFO] syscall num=1 ret=5
+[INFO] [HARNESS] call=sys_write case=write_test_write ret=5
+[INFO] dispatch called with num=7 a0=0x4 a1=0x0 a2=0x0
+[INFO] [CLOSE] fd=4 → OK
+[INFO] syscall num=7 ret=0
+[INFO] [HARNESS] call=sys_close case=write_test_close ret=0
+[INFO] dispatch called with num=3 a0=0x8000015bf9 a1=0x0 a2=0x0
+[INFO] [OPEN][VFS] path="/vfs/var/log/test_write.txt" → fd=4
+[INFO] syscall num=3 ret=4
+[INFO] [HARNESS] call=sys_open case=write_test_reopen ret=4
+[INFO] dispatch called with num=4 a0=0x4 a1=0x10000010650 a2=0x5
+[INFO] syscall num=4 ret=5
+[INFO] [HARNESS] call=sys_read case=write_test_read ret=5
+[INFO] dispatch called with num=7 a0=0x4 a1=0x0 a2=0x0
+[INFO] [CLOSE] fd=4 → OK
+[INFO] syscall num=7 ret=0
+[INFO] [HARNESS] call=sys_close case=write_test_close2 ret=0
 [INFO] dispatch called with num=3 a0=0xffffffffffffffff a1=0x0 a2=0x0
 [INFO] syscall num=3 ret=18446744073709551602
 [INFO] [HARNESS] call=sys_open case=bogus_ptr ret=-14 (EFAULT) [raw=18446744073709551602]
-[INFO] dispatch called with num=3 a0=0x80000132ce a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000014830 a1=0x0 a2=0x0
 [INFO] syscall num=3 ret=18446744073709551594
 [INFO] [HARNESS] call=sys_open case=empty_path ret=-22 (EINVAL) [raw=18446744073709551594]
-[INFO] dispatch called with num=3 a0=0x80000141e5 a1=0xffffffff a2=0x0
+[INFO] dispatch called with num=3 a0=0x800001580f a1=0xffffffff a2=0x0
 [INFO] syscall num=3 ret=18446744073709551594
 [INFO] [HARNESS] call=sys_open case=bad_flags ret=-22 (EINVAL) [raw=18446744073709551594]
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=4
 [INFO] syscall num=3 ret=4
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=4
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=5
 [INFO] syscall num=3 ret=5
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=5
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=6
 [INFO] syscall num=3 ret=6
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=6
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=7
 [INFO] syscall num=3 ret=7
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=7
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=8
 [INFO] syscall num=3 ret=8
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=8
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=9
 [INFO] syscall num=3 ret=9
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=9
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=10
 [INFO] syscall num=3 ret=10
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=10
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=11
 [INFO] syscall num=3 ret=11
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=11
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=12
 [INFO] syscall num=3 ret=12
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=12
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=13
 [INFO] syscall num=3 ret=13
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=13
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=14
 [INFO] syscall num=3 ret=14
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=14
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=15
 [INFO] syscall num=3 ret=15
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=15
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=16
 [INFO] syscall num=3 ret=16
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=16
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=17
 [INFO] syscall num=3 ret=17
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=17
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=18
 [INFO] syscall num=3 ret=18
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=18
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=19
 [INFO] syscall num=3 ret=19
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=19
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=20
 [INFO] syscall num=3 ret=20
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=20
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=21
 [INFO] syscall num=3 ret=21
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=21
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=22
 [INFO] syscall num=3 ret=22
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=22
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=23
 [INFO] syscall num=3 ret=23
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=23
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=24
 [INFO] syscall num=3 ret=24
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=24
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=25
 [INFO] syscall num=3 ret=25
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=25
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=26
 [INFO] syscall num=3 ret=26
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=26
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=27
 [INFO] syscall num=3 ret=27
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=27
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=28
 [INFO] syscall num=3 ret=28
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=28
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=29
 [INFO] syscall num=3 ret=29
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=29
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=30
 [INFO] syscall num=3 ret=30
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=30
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=31
 [INFO] syscall num=3 ret=31
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=31
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=32
 [INFO] syscall num=3 ret=32
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=32
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=33
 [INFO] syscall num=3 ret=33
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=33
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=34
 [INFO] syscall num=3 ret=34
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=34
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=35
 [INFO] syscall num=3 ret=35
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=35
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=36
 [INFO] syscall num=3 ret=36
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=36
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=37
 [INFO] syscall num=3 ret=37
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=37
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=38
 [INFO] syscall num=3 ret=38
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=38
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=39
 [INFO] syscall num=3 ret=39
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=39
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=40
 [INFO] syscall num=3 ret=40
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=40
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=41
 [INFO] syscall num=3 ret=41
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=41
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=42
 [INFO] syscall num=3 ret=42
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=42
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=43
 [INFO] syscall num=3 ret=43
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=43
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=44
 [INFO] syscall num=3 ret=44
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=44
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=45
 [INFO] syscall num=3 ret=45
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=45
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=46
 [INFO] syscall num=3 ret=46
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=46
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=47
 [INFO] syscall num=3 ret=47
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=47
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=48
 [INFO] syscall num=3 ret=48
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=48
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=49
 [INFO] syscall num=3 ret=49
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=49
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=50
 [INFO] syscall num=3 ret=50
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=50
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=51
 [INFO] syscall num=3 ret=51
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=51
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=52
 [INFO] syscall num=3 ret=52
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=52
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=53
 [INFO] syscall num=3 ret=53
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=53
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=54
 [INFO] syscall num=3 ret=54
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=54
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=55
 [INFO] syscall num=3 ret=55
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=55
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=56
 [INFO] syscall num=3 ret=56
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=56
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=57
 [INFO] syscall num=3 ret=57
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=57
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=58
 [INFO] syscall num=3 ret=58
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=58
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=59
 [INFO] syscall num=3 ret=59
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=59
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=60
 [INFO] syscall num=3 ret=60
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=60
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=61
 [INFO] syscall num=3 ret=61
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=61
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=62
 [INFO] syscall num=3 ret=62
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=62
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=63
 [INFO] syscall num=3 ret=63
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=63
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_exhaust.txt" flags=0 → fd=64
 [INFO] syscall num=3 ret=64
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion_open ret=64
-[INFO] dispatch called with num=3 a0=0x8000013b8a a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000015106 a1=0x0 a2=0x0
 [ERROR] [OPEN] failed to allocate FD → EMFILE (Too many open files)
 [INFO] syscall num=3 ret=18446744073709551592
 [INFO] [HARNESS] call=sys_open case=fd_exhaustion ret=-24 (EMFILE) [raw=18446744073709551592]
@@ -326,17 +351,14 @@ INFO : Jumping to kernel entry point at VirtAddr(0x800003e000)
 [INFO] [CLOSE] fd=4 → OK
 [INFO] syscall num=7 ret=0
 [INFO] [HARNESS] call=sys_close case=close_lowest_fd ret=0
-[INFO] dispatch called with num=3 a0=0x8000012ee7 a1=0x0 a2=0x0
+[INFO] dispatch called with num=3 a0=0x8000014437 a1=0x0 a2=0x0
 [INFO] [OPEN] path="fd_reuse.txt" flags=0 → fd=4
 [INFO] syscall num=3 ret=4
 [INFO] [HARNESS] call=sys_open case=fd_reuse ret=4
-[INFO] dispatch called with num=4 a0=0x4 a1=0x10000010b40 a2=0x10
-[INFO] syscall num=4 ret=18446744073709551607
-[INFO] [HARNESS] call=sys_read case=happy ret=-9 (EBADF) [raw=18446744073709551607]
-[INFO] dispatch called with num=4 a0=0x0 a1=0x10000010b40 a2=0x0
+[INFO] dispatch called with num=4 a0=0x0 a1=0x10000010550 a2=0x0
 [INFO] syscall num=4 ret=0
 [INFO] [HARNESS] call=sys_read case=zero_len ret=0
-[INFO] dispatch called with num=4 a0=0x63 a1=0x10000010b40 a2=0x10
+[INFO] dispatch called with num=4 a0=0x63 a1=0x10000010550 a2=0x10
 [INFO] syscall num=4 ret=18446744073709551607
 [INFO] [HARNESS] call=sys_read case=invalid_fd ret=-9 (EBADF) [raw=18446744073709551607]
 [INFO] dispatch called with num=999 a0=0x0 a1=0x0 a2=0x0
@@ -344,9 +366,9 @@ INFO : Jumping to kernel entry point at VirtAddr(0x800003e000)
 [INFO] syscall num=999 ret=18446744073709551578
 [INFO] [HARNESS] call=sys_unknown case=num_999 ret=-38 (ENOSYS) [raw=18446744073709551578]
 [INFO] dispatch called with num=5 a0=0x40 a1=0x0 a2=0x0
-[INFO] syscall num=5 ret=75059993823808
-[INFO] [HARNESS] call=sys_alloc case=happy ret=75059993823808
-[INFO] dispatch called with num=6 a0=0x44444444ca40 a1=0x40 a2=0x0
+[INFO] syscall num=5 ret=75059993824896
+[INFO] [HARNESS] call=sys_alloc case=happy ret=75059993824896
+[INFO] dispatch called with num=6 a0=0x44444444ce80 a1=0x40 a2=0x0
 [INFO] syscall num=6 ret=0
 [INFO] [HARNESS] call=sys_free case=happy ret=0
 [INFO] dispatch called with num=5 a0=0x0 a1=0x0 a2=0x0
@@ -355,7 +377,7 @@ INFO : Jumping to kernel entry point at VirtAddr(0x800003e000)
 [INFO] dispatch called with num=6 a0=0x0 a1=0x40 a2=0x0
 [INFO] syscall num=6 ret=18446744073709551594
 [INFO] [HARNESS] call=sys_free case=zero_ptr ret=-22 (EINVAL) [raw=18446744073709551594]
-[INFO] dispatch called with num=6 a0=0x44444444ca40 a1=0x0 a2=0x0
+[INFO] dispatch called with num=6 a0=0x44444444ce80 a1=0x0 a2=0x0
 [INFO] syscall num=6 ret=18446744073709551594
 [INFO] [HARNESS] call=sys_free case=zero_size ret=-22 (EINVAL) [raw=18446744073709551594]
 [INFO] dispatch called with num=1 a0=0x0 a1=0x0 a2=0x0

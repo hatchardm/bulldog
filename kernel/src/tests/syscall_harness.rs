@@ -56,7 +56,6 @@ fn sys_close(fd: u64) -> u64 {
     unsafe { syscall(SYS_CLOSE, fd, 0, 0) }
 }
 
-
 /// Decode raw syscall return values into a readable form.
 /// Converts raw u64 → signed errno → symbolic errno.
 fn format_ret(raw: u64) -> String {
@@ -133,12 +132,55 @@ pub fn run_syscall_tests() {
     const MAX_WRITE: u64 = 4096;
     assert!(ret <= MAX_WRITE);
 
-
-    // --- sys_open happy path ---
-    let path = b"foo.txt\0";
+    // --- sys_open + sys_read happy path on /vfs/etc/hostname ---
+    let path = b"/vfs/etc/hostname\0";
     let fd = sys_open(path.as_ptr(), 0);
     harness_log("sys_open", "happy", fd);
+    assert!(fd >= 3, "sys_open happy path should succeed");
+
+    let mut buf = [0u8; 16];
+    let ret = sys_read(fd, buf.as_mut_ptr(), buf.len() as u32);
+    harness_log("sys_read", "happy", ret);
+
+    // Expect to read "bulldog\n"
+    assert_eq!(ret, 8);
+    assert_eq!(&buf[..8], b"bulldog\n");
+
+        // --- sys_write to a VFS file + read back ---
+    let path = b"/vfs/var/log/test_write.txt\0";
+
+    // 1. Open (creates file if missing)
+    let fd = sys_open(path.as_ptr(), 0);
+    harness_log("sys_open", "write_test_open", fd);
     assert!(fd >= 3);
+
+    // 2. Write "hello"
+    let msg = b"hello";
+    let ret = sys_write(fd, msg.as_ptr(), msg.len() as u32);
+    harness_log("sys_write", "write_test_write", ret);
+    assert_eq!(ret, msg.len() as u64);
+
+    // 3. Close to reset offset
+    let ret = sys_close(fd);
+    harness_log("sys_close", "write_test_close", ret);
+    assert_eq!(ret, 0);
+
+    // 4. Reopen for reading
+    let fd2 = sys_open(path.as_ptr(), 0);
+    harness_log("sys_open", "write_test_reopen", fd2);
+    assert!(fd2 >= 3);
+
+    // 5. Read back
+    let mut buf2 = [0u8; 5];
+    let ret = sys_read(fd2, buf2.as_mut_ptr(), buf2.len() as u32);
+    harness_log("sys_read", "write_test_read", ret);
+    assert_eq!(ret, 5);
+    assert_eq!(&buf2, b"hello");
+
+    // 6. Close
+    let ret = sys_close(fd2);
+    harness_log("sys_close", "write_test_close2", ret);
+    assert_eq!(ret, 0);
 
     // --- sys_open bogus pointer ---
     let bogus_ptr: u64 = 0xFFFF_FFFF_FFFF_FFFF;
@@ -204,19 +246,6 @@ pub fn run_syscall_tests() {
     let fd_reused = sys_open(path.as_ptr(), 0);
     harness_log("sys_open", "fd_reuse", fd_reused);
     assert_eq!(fd_reused, lowest_fd, "sys_open should reuse the lowest available FD");
-
-
-   // --- sys_read happy path ---
-let mut buf = [0u8; 16];
-
-// read from the fd we just reused (4), not stdin (0)
-let ret = sys_read(4, buf.as_mut_ptr(), buf.len() as u32);
-harness_log("sys_read", "happy", ret);
-
-// For now, sys_read is unimplemented and returns 0 bytes read.
-assert_eq!(ret, err(errno::EBADF));
-
-
 
     // --- sys_read zero length ---
     let ret = sys_read(0, buf.as_mut_ptr(), 0);
@@ -288,7 +317,6 @@ assert_eq!(ret, err(errno::EBADF));
         assert_eq!(ret, err(errno::ENOSYS), "unimplemented syscall {} did not return ENOSYS", num);
     }
 
-    
     // --- sys_exit ---
     let code = sys_exit(123);
     harness_log("sys_exit", "happy", code);
@@ -305,7 +333,6 @@ assert_eq!(ret, err(errno::EBADF));
     harness_log("sys_exit", "max_code", code);
     assert_eq!(code, 0);
 }
-
 
 
 

@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use alloc::string::String;
 use spin::Mutex;
 use crate::vfs::node::VfsNode;
+use spin::MutexGuard;
 
 /// A single mount point.
 /// Example: path "/" → root filesystem.
@@ -35,5 +36,14 @@ pub fn init_mount_table() {
 
 /// Get a reference to the global mount table.
 pub fn mount_table() -> spin::MutexGuard<'static, Vec<MountPoint>> {
+    MOUNT_TABLE.lock()
+}
+
+
+pub fn vfs_root_mut() -> MutexGuard<'static, Vec<MountPoint>> {
+    MOUNT_TABLE.lock()
+}
+
+pub fn vfs_root() -> MutexGuard<'static, Vec<MountPoint>> {
     MOUNT_TABLE.lock()
 }

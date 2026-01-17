@@ -118,7 +118,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     
 
     info!("Returned to main");
-
+    
+  
+    
     hlt_loop();
 }
 

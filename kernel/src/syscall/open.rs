@@ -30,14 +30,18 @@ pub fn sys_open(path_ptr: u64, flags: u64, _mode: u64) -> u64 {
         return err(errno::EINVAL);
     }
 
-    // ------------------------------------------------------------
-    // NEW: VFS path handling (opt‑in via "/vfs/...")
-    // ------------------------------------------------------------
+    // VFS path handling
     if path.starts_with("/vfs/") {
-        let vfs_path = &path[4..]; // strip "/vfs"
+        let vfs_path = &path[4..];
 
         match resolve_path(vfs_path) {
             Ok(fileops) => {
+                // Reset shared file offset on each open
+                {
+                    let mut guard = fileops.lock();
+                    guard.rewind();
+                }
+
                 let entry = FdEntry {
                     file: Box::new(VfsFileLike::new(fileops)),
                     flags,
@@ -50,23 +54,27 @@ pub fn sys_open(path_ptr: u64, flags: u64, _mode: u64) -> u64 {
                         fd
                     }
                     Err(e) => {
-                        error!("[OPEN][VFS] fd_alloc failed → {:?} ({})",
-                               e, strerror(e.num()));
+                        error!(
+                            "[OPEN][VFS] fd_alloc failed → {:?} ({})",
+                            e,
+                            strerror(e.num())
+                        );
                         err_from(e)
                     }
                 };
             }
             Err(e) => {
-                error!("[OPEN][VFS] resolve_path failed → {:?} ({})",
-                       e, strerror(e.num()));
+                error!(
+                    "[OPEN][VFS] resolve_path failed → {:?} ({})",
+                    e,
+                    strerror(e.num())
+                );
                 return err_from(e);
             }
         }
     }
 
-    // ------------------------------------------------------------
-    // ORIGINAL BEHAVIOR (unchanged): always return a Stdout-like file
-    // ------------------------------------------------------------
+    // Default: Stdout
     let entry = FdEntry {
         file: Box::new(Stdout),
         flags,

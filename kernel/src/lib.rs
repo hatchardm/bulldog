@@ -54,7 +54,7 @@ use crate::allocator::ALLOCATOR;
 use crate::apic::{lapic_read, LapicRegister, setup_apic};
 use crate::memory::{BootInfoFrameAllocator, PreHeapAllocator, init_offset_page_table, map_lapic_mmio};
 use crate::syscall::fd::init_fd_table_with_std;
-
+use crate::vfs::init::vfs_init;
 /// Kernel initialization routine.
 /// 
 /// - Disables legacy PIC.
@@ -129,11 +129,12 @@ pub fn kernel_init(
     #[cfg(not(feature = "syscall_tests"))]
     {info!("Syscall handler ready");}
 
-    
 
-   #[cfg(feature = "syscall_tests")]
-   tests::syscall_harness::run_syscall_tests();
-   
+     #[cfg(feature = "syscall_tests")]
+     {
+     vfs_init();
+     tests::syscall_harness::run_syscall_tests();
+     }
 
 
     // APIC MMIO mapping

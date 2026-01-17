@@ -5,3 +5,4 @@ pub mod resolve;
 pub mod memfile;
 pub mod ops;
 pub mod adapter;
+pub mod init;

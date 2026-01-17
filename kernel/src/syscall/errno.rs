@@ -305,6 +305,7 @@ pub enum Errno {
     ENOSYS,
     ENOTDIR,
     EEXIST,
+    EISDIR
 
 }
 
@@ -322,6 +323,7 @@ impl Errno {
             Errno::ENOSYS  => ENOSYS,
             Errno::ENOTDIR => ENOTDIR,
             Errno::EEXIST  => EEXIST,
+            Errno::EISDIR  => EISDIR,
         }
     }
 }

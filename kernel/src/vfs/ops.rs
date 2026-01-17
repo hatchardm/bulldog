@@ -1,93 +1,112 @@
 // File: kernel/src/vfs/ops.rs
-//! Basic VFS mutation helpers: create files and directories.
 
-use alloc::string::String;
-use alloc::vec::Vec;
-use alloc::collections::BTreeMap;
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use alloc::sync::Arc;
+use spin::Mutex;
+
 use crate::syscall::errno::Errno;
-use crate::vfs::file::FileOps;
 use crate::vfs::mount::mount_table;
 use crate::vfs::node::VfsNode;
+use crate::vfs::file::FileOps;
 
-/// Create a directory at the given absolute path.
-/// Example: vfs_mkdir("/etc")
+/// Normalize a path like "//foo/bar" → "/foo/bar"
+fn normalize_path(path: &str) -> String {
+    let mut out = String::from("/");
+    out.push_str(path.trim_start_matches('/'));
+    out
+}
+
+/// Split "/foo/bar" → ["foo", "bar"]
+fn split_path(path: &str) -> alloc::vec::Vec<String> {
+    path.trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// Create a directory (and any missing parents) at `path`.
 pub fn vfs_mkdir(path: &str) -> Result<(), Errno> {
-    let components = split_path(path);
-    if components.is_empty() {
-        return Err(Errno::EINVAL);
+    let norm = normalize_path(path);
+
+    if norm == "/" {
+        return Ok(());
     }
 
+    let components = split_path(&norm);
+
     let mut guard = mount_table();
-    let root = guard
+    let root_mount = guard
         .iter_mut()
         .find(|m| m.path == "/")
         .ok_or(Errno::ENOENT)?;
 
-    let mut node = &mut root.root;
+    let mut node = &mut root_mount.root;
 
     for comp in components {
         match node {
             VfsNode::Directory(children) => {
-                node = children.entry(comp).or_insert_with(|| {
-                    VfsNode::Directory(BTreeMap::new())
-                });
+                node = children
+                    .entry(comp.clone())
+                    .or_insert_with(|| VfsNode::Directory(BTreeMap::new()));
             }
-            _ => return Err(Errno::ENOTDIR),
+            VfsNode::File(_) => return Err(Errno::ENOTDIR),
+            VfsNode::Symlink(_) => return Err(Errno::ENOSYS),
         }
     }
 
     Ok(())
 }
 
-/// Create a file at the given absolute path.
-/// Example: vfs_create_file("/hello.txt", MemFile::new(b"hi".to_vec()))
+/// Create or replace a file at `path`.
+///
+/// Files are stored as Arc<Mutex<Box<dyn FileOps>>> so that all opens
+/// share the same underlying file object.
 pub fn vfs_create_file(path: &str, file: Box<dyn FileOps>) -> Result<(), Errno> {
-    let mut components = split_path(path);
-    if components.is_empty() {
-        return Err(Errno::EINVAL);
+    let norm = normalize_path(path);
+
+    if norm == "/" {
+        return Err(Errno::EISDIR);
     }
 
-    let filename = components.pop().unwrap();
+    let mut components = split_path(&norm);
+
+    let file_name = match components.pop() {
+        Some(name) => name,
+        None => return Err(Errno::EINVAL),
+    };
 
     let mut guard = mount_table();
-    let root = guard
+    let root_mount = guard
         .iter_mut()
         .find(|m| m.path == "/")
         .ok_or(Errno::ENOENT)?;
 
-    let mut node = &mut root.root;
+    let mut node = &mut root_mount.root;
 
-    // Walk to parent directory
     for comp in components {
         match node {
             VfsNode::Directory(children) => {
-                node = children.entry(comp).or_insert_with(|| {
-                    VfsNode::Directory(BTreeMap::new())
-                });
+                node = children
+                    .entry(comp.clone())
+                    .or_insert_with(|| VfsNode::Directory(BTreeMap::new()));
             }
-            _ => return Err(Errno::ENOTDIR),
+            VfsNode::File(_) => return Err(Errno::ENOTDIR),
+            VfsNode::Symlink(_) => return Err(Errno::ENOSYS),
         }
     }
 
-    // Insert the file
+    // Wrap the file in Arc<Mutex<Box<dyn FileOps>>>
+    let shared = Arc::new(Mutex::new(file));
+
     match node {
         VfsNode::Directory(children) => {
-            if children.contains_key(&filename) {
-                return Err(Errno::EEXIST);
-            }
-            children.insert(filename, VfsNode::File(file));
+            children.insert(file_name, VfsNode::File(shared));
             Ok(())
         }
-        _ => Err(Errno::ENOTDIR),
+        VfsNode::File(_) => Err(Errno::ENOTDIR),
+        VfsNode::Symlink(_) => Err(Errno::ENOSYS),
     }
-}
-
-/// Split "/foo/bar" → ["foo", "bar"]
-fn split_path(path: &str) -> Vec<String> {
-    path.trim_matches('/')
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect()
 }

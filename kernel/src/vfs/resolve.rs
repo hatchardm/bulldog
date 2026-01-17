@@ -1,47 +1,39 @@
 // File: kernel/src/vfs/resolve.rs
-//! Minimal path resolver for Bulldog.
-//! This now walks the mount table and VFS tree, but still returns ENOENT/ENOSYS
-//! for callers. It is not yet wired into syscalls.
-
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use alloc::sync::Arc;
+use spin::Mutex;
 
 use crate::syscall::errno::Errno;
-use crate::vfs::file::{FileOps, FileResult};
+use crate::vfs::file::FileOps;
 use crate::vfs::mount::mount_table;
 use crate::vfs::node::VfsNode;
-use alloc::boxed::Box;
 
-/// Resolve a path into a FileOps object.
+/// Resolve a path into a shared FileOps handle.
 ///
-/// Current behavior:
-/// - Finds the root mount ("/").
-/// - Normalizes and splits the path.
-/// - Walks the VFS tree under the root mount.
-/// - Always returns ENOENT or ENOSYS at the end, because we don't yet
-///   know how to turn a VfsNode into a concrete FileOps instance.
-///
-/// This means that, effectively, resolve_path still behaves as "not implemented"
-/// for all paths, but the traversal logic is now in place and ready for the VFS.
-pub fn resolve_path(path: &str) -> FileResult<Box<dyn FileOps>> {
+/// Returns:
+///   Ok(Arc<Mutex<Box<dyn FileOps>>>) → file found
+///   Err(ENOENT)                      → not found
+///   Err(EISDIR)                      → final node is a directory
+///   Err(ENOSYS)                      → symlinks not supported yet
+pub fn resolve_path(path: &str) -> Result<Arc<Mutex<Box<dyn FileOps>>>, Errno> {
     let norm = normalize_path(path);
 
-    // Lock the mount table and find the root mount ("/").
     let guard = mount_table();
-    let root = match guard.iter().find(|m| m.path == "/") {
-        Some(m) => &m.root,
-        None => return Err(Errno::ENOENT),
-    };
+    let root_mount = guard
+        .iter()
+        .find(|m| m.path == "/")
+        .ok_or(Errno::ENOENT)?;
 
-    // Special case: "/" currently has no openable object behind it.
+    let mut node = &root_mount.root;
+
     if norm == "/" {
-        return Err(Errno::ENOSYS);
+        return Err(Errno::EISDIR);
     }
 
     let components = split_path(&norm);
 
-    // Walk the VFS tree starting from root.
-    let mut node = root;
     for comp in components {
         match node {
             VfsNode::Directory(children) => {
@@ -50,26 +42,26 @@ pub fn resolve_path(path: &str) -> FileResult<Box<dyn FileOps>> {
                     None => return Err(Errno::ENOENT),
                 }
             }
-            // Trying to descend into a non-directory node is currently unsupported.
-            _ => return Err(Errno::ENOSYS),
+            VfsNode::File(_) => return Err(Errno::ENOTDIR),
+            VfsNode::Symlink(_) => return Err(Errno::ENOSYS),
         }
     }
 
-    // We successfully found a node, but we don't yet have a way to
-    // create a FileOps object from it. That will come in a later step.
-    Err(Errno::ENOSYS)
+    match node {
+        VfsNode::File(f) => Ok(f.clone()), // clone Arc, not file
+        VfsNode::Directory(_) => Err(Errno::EISDIR),
+        VfsNode::Symlink(_) => Err(Errno::ENOSYS),
+    }
 }
 
-/// Normalize a path like "//foo/./bar" into a stable "/foo/./bar" form.
-/// For now this is very simple: ensure a single leading slash and no trailing spaces.
+/// Normalize a path like "//foo/bar" → "/foo/bar"
 fn normalize_path(path: &str) -> String {
-    // Trim leading slashes to avoid "//" style paths, then add a single "/".
     let mut out = String::from("/");
     out.push_str(path.trim_start_matches('/'));
     out
 }
 
-/// Split "/foo/bar" → ["foo", "bar"] as owned Strings.
+/// Split "/foo/bar" → ["foo", "bar"]
 fn split_path(path: &str) -> Vec<String> {
     path.trim_matches('/')
         .split('/')
