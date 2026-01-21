@@ -138,6 +138,7 @@ pub fn run_syscall_tests() {
     harness_log("sys_open", "happy", fd);
     assert!(fd >= 3, "sys_open happy path should succeed");
 
+
     let mut buf = [0u8; 16];
     let ret = sys_read(fd, buf.as_mut_ptr(), buf.len() as u32);
     harness_log("sys_read", "happy", ret);
@@ -145,6 +146,16 @@ pub fn run_syscall_tests() {
     // Expect to read "bulldog\n"
     assert_eq!(ret, 8);
     assert_eq!(&buf[..8], b"bulldog\n");
+
+    // --- sys_read bogus pointer ---
+    let bogus_ptr: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+
+    // Use the hostname FD (valid and already opened)
+    let ret = unsafe { syscall(SYS_READ, fd, bogus_ptr, 8) };
+
+    harness_log("sys_read", "bogus_ptr", ret);
+    assert_eq!(ret, err(errno::EFAULT));
+
 
         // --- sys_write to a VFS file + read back ---
     let path = b"/vfs/var/log/test_write.txt\0";
@@ -182,6 +193,7 @@ pub fn run_syscall_tests() {
     harness_log("sys_close", "write_test_close2", ret);
     assert_eq!(ret, 0);
 
+
     // --- sys_open bogus pointer ---
     let bogus_ptr: u64 = 0xFFFF_FFFF_FFFF_FFFF;
     let fd = unsafe { syscall(SYS_OPEN, bogus_ptr, 0, 0) };
@@ -199,6 +211,22 @@ pub fn run_syscall_tests() {
     let fd = sys_open(path.as_ptr(), 0xFFFF_FFFF);
     harness_log("sys_open", "bad_flags", fd);
     assert_eq!(fd, err(errno::EINVAL));
+
+
+          // --- sys_read on closed FD ---
+    // Open a file, close it, then attempt to read from the closed FD.
+    let path = b"/vfs/etc/hostname\0";
+    let fd_tmp = sys_open(path.as_ptr(), 0);
+    assert!(fd_tmp >= 3);
+
+    let ret = sys_close(fd_tmp);
+    harness_log("sys_close", "read_after_close_close", ret);
+    assert_eq!(ret, 0);
+
+    let mut buf3 = [0u8; 8];
+    let ret = sys_read(fd_tmp, buf3.as_mut_ptr(), buf3.len() as u32);
+    harness_log("sys_read", "read_after_close", ret);
+    assert_eq!(ret, err(errno::EBADF));
 
     // --- sys_open FD exhaustion and reuse ---
     // Open files until we hit EMFILE, tracking all successful FDs.
@@ -257,6 +285,8 @@ pub fn run_syscall_tests() {
     harness_log("sys_read", "invalid_fd", ret);
     assert_eq!(ret, err(errno::EBADF));
 
+  
+
     // --- unknown syscall (must run BEFORE sys_exit) ---
     let ret = unsafe { syscall(999, 0, 0, 0) };
     harness_log("sys_unknown", "num_999", ret);
@@ -278,6 +308,13 @@ pub fn run_syscall_tests() {
     harness_log("sys_alloc", "zero_size", ret);
     assert_eq!(ret, err(errno::EINVAL));
 
+   // --- sys_alloc huge size ---
+   // Request a very large allocation that should not succeed.
+   let huge = u64::MAX / 2;
+   let ret = sys_alloc(huge);
+   harness_log("sys_alloc", "huge_size", ret);
+   // Kernel currently treats absurdly large sizes as invalid, not out-of-memory.
+   assert_eq!(ret, err(errno::EINVAL));
     // --- sys_free zero ptr ---
     let ret = sys_free(0, 64);
     harness_log("sys_free", "zero_ptr", ret);
@@ -286,6 +323,13 @@ pub fn run_syscall_tests() {
     // --- sys_free zero size ---
     let ret = sys_free(ptr, 0);
     harness_log("sys_free", "zero_size", ret);
+    assert_eq!(ret, err(errno::EINVAL));
+
+    // --- sys_free bogus pointer ---
+    // Freeing a pointer that was never allocated.
+    let bogus_ptr: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+    let ret = sys_free(bogus_ptr, 64);
+    harness_log("sys_free", "bogus_ptr", ret);
     assert_eq!(ret, err(errno::EINVAL));
 
     // --- syscall table sweep: implemented vs unimplemented ---

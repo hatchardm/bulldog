@@ -1,8 +1,16 @@
+
+use crate::allocator::{HEAP_START, HEAP_SIZE};
 use alloc::alloc::{dealloc, Layout};
 use crate::syscall::errno::{errno, err};
 
 pub fn sys_free(ptr: usize, size: usize) -> Result<(), u64> {
     if ptr == 0 || size == 0 {
+        return Err(errno::EINVAL);
+    }
+
+    // Reject pointers outside the heap region.
+    let heap_end = HEAP_START + HEAP_SIZE;
+    if ptr < HEAP_START || ptr >= heap_end {
         return Err(errno::EINVAL);
     }
 
@@ -19,4 +27,6 @@ pub fn sys_free_trampoline(ptr: u64, size: u64, _a2: u64) -> u64 {
         Err(e) => err(e),
     }
 }
+
+
 
