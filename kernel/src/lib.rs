@@ -46,6 +46,9 @@ pub mod logger;
 pub mod syscall;
 pub mod serial;
 pub mod vfs;
+pub mod elf;
+pub mod user_mode;
+
 
 #[cfg(feature = "syscall_tests")]
 mod tests;

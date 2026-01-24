@@ -7,12 +7,18 @@ use x86_64::{
     },
     registers::control::Cr3,
 };
+
+
 use log::{info, debug, warn, error, trace}; // log macros
 
 extern crate alloc;
 use alloc::vec::Vec;
 use alloc::collections::BTreeSet;
 use crate::apic::LAPIC_VIRT_BASE;
+use crate::elf::loader::{SegmentFlags, ElfError};
+
+use crate::elf::types::Elf64_Ehdr;
+use crate::elf::loader::{validate_elf_header, get_program_headers, load_segments};
 
 /// Same safety requirements as `init`.
 unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut PageTable {
@@ -405,5 +411,75 @@ pub fn find_unused_frame(allocator: &FrameBitmap) -> Option<PhysFrame> {
 
 
 
+/// Map an ELF segment into memory.
+
+pub fn map_elf_segment(
+    mapper: &mut impl Mapper<Size4KiB>,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    vaddr_start: u64,
+    mem_size: usize,
+    file_bytes: &[u8],
+    flags: &SegmentFlags,
+) -> Result<(), ElfError> {
+    let start = VirtAddr::new(vaddr_start);
+    let end   = start + (mem_size as u64).saturating_sub(1);
+    let start_page = Page::containing_address(start);
+    let end_page   = Page::containing_address(end);
+
+    let mut page_flags = PageTableFlags::PRESENT;
+    if flags.writable   { page_flags |= PageTableFlags::WRITABLE; }
+    if !flags.executable { page_flags |= PageTableFlags::NO_EXECUTE; }
+
+    // Map pages
+    for page in Page::range_inclusive(start_page, end_page) {
+        let frame = frame_allocator
+            .allocate_frame()
+            .ok_or(ElfError::BadPhSize)?;
+        unsafe {
+            mapper.map_to(page, frame, page_flags, frame_allocator)
+                .map_err(|_| ElfError::BadPhSize)?
+                .flush();
+        }
+    }
+
+    // Copy file-backed bytes into the mapped region
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            file_bytes.as_ptr(),
+            start.as_mut_ptr(),
+            file_bytes.len(),
+        );
+    }
+
+    // Zero-fill the rest (if any)
+    if mem_size > file_bytes.len() {
+        let zero_start = start + file_bytes.len() as u64;
+        let zero_len   = mem_size - file_bytes.len();
+        unsafe {
+            core::ptr::write_bytes(zero_start.as_mut_ptr::<u8>(), 0, zero_len);
+        }
+    }
+
+    Ok(())
+}
 
 
+pub fn load_elf_into_address_space(
+    mapper: &mut impl Mapper<Size4KiB>,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    elf_data: &[u8],
+) -> Result<u64, ElfError> {
+    let hdr = unsafe {
+        &*(elf_data.as_ptr() as *const Elf64_Ehdr)
+    };
+
+    validate_elf_header(hdr)?;
+    let phdrs = get_program_headers(elf_data, hdr)?;
+
+    load_segments(elf_data, hdr, phdrs, |vaddr, mem_size, file_bytes, flags| {
+        map_elf_segment(mapper, frame_allocator, vaddr, mem_size, file_bytes, flags)
+            .map_err(|_| ())  // collapse back into the closure’s error type
+    })?;
+
+    Ok(hdr.e_entry)
+}
