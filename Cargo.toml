@@ -14,7 +14,7 @@ ovmf-prebuilt = "0.1.0-alpha"
 members = [
     "kernel",
     "bulldog-syscall",
-    "user/hello",
+ #   "user/hello",
 ]
 
 [profile.dev]
