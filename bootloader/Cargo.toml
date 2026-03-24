@@ -5,3 +5,6 @@ edition = "2024"
 
 [dependencies]
 uefi = "0.28.0"
+
+[lib]
+crate-type = ["cdylib"]
