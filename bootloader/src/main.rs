@@ -12,6 +12,7 @@ fn efi_main(_handle: Handle, st: SystemTable<Boot>) -> Status {
     let msg = CString16::try_from("Bulldog UEFI bootloader starting...\n").unwrap();
     let _ = stdout.output_string(&msg);
 
+
     Status::SUCCESS
 }
 

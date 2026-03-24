@@ -19,6 +19,12 @@ members = [
 
 [profile.dev]
 debug = true
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+
 
 [features]
 default = []

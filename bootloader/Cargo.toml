@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-uefi = "0.28.0"
+uefi = { version = "0.28.0", features = ["alloc"] }
+
 
 [[bin]]
 name = "bulldog-bootloader"
