@@ -10,3 +10,8 @@ uefi = "0.28.0"
 name = "bulldog-bootloader"
 path = "src/main.rs"
 
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
