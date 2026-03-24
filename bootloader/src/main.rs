@@ -6,7 +6,7 @@ use uefi::CString16;
 use core::panic::PanicInfo;
 
 #[entry]
-fn efi_main(_handle: Handle, st: SystemTable<Boot>) -> Status {
+fn efi_main(_handle: Handle, mut st: SystemTable<Boot>) -> Status {
     let stdout = st.stdout();
 
     let msg = CString16::try_from("Bulldog UEFI bootloader starting...\n").unwrap();
