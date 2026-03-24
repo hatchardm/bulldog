@@ -14,7 +14,6 @@ members = [
     "kernel",
     "bulldog-syscall",
  #   "user/hello",
-    "bootloader",
 ]
 
 [profile.dev]
