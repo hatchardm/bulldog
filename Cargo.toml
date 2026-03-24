@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [build-dependencies]
-bootloader = "0.11.12"
 kernel = { path = "kernel", artifact = "bin", target = "x86_64-unknown-none" }
 
 [dependencies]
