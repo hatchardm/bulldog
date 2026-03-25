@@ -30,11 +30,11 @@ use log::{info, error};
 use log::LevelFilter;
 use x86_64::VirtAddr;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 static mut KERNEL_STACK: [u8; 100 * 1024] = [0; 100 * 1024];
 
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bulldog_entry(boot_info: &'static mut BulldogBootInfo) -> ! {
     kernel_main(boot_info)
 }
