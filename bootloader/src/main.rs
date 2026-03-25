@@ -13,7 +13,6 @@ use boot_proto::{Framebuffer, PixelFormat};
 
 #[entry]
 fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
-    // Initialise helpers (logging, panic, etc.)
     helpers::init(&mut st).expect("UEFI init failed");
 
     // First message
@@ -25,7 +24,7 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
         let _ = stdout.output_string(msg);
     }
 
-    // Open GOP via open_protocol
+    // Open GOP
     let gop_scoped = unsafe {
         st.boot_services()
             .open_protocol::<GraphicsOutput>(
@@ -40,8 +39,6 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
     };
 
     let gop_ref = gop_scoped.get().expect("GOP pointer was null");
-
-    // Firmware is single-threaded here; this cast is acceptable and we explicitly allow the lint.
     let gop: &mut GraphicsOutput =
         unsafe { &mut *(gop_ref as *const _ as *mut GraphicsOutput) };
 
@@ -65,8 +62,29 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
         pixel_format,
     };
 
+    // ⭐ NOW paint the screen blue — after _fb_info exists
+    {
+        let fb_ptr = _fb_info.addr as *mut u32;
+        let width = _fb_info.width;
+        let height = _fb_info.height;
+        let stride = _fb_info.stride;
+
+        let blue = match _fb_info.pixel_format {
+            PixelFormat::Rgb => 0x0000FF,
+            PixelFormat::Bgr => 0xFF0000,
+        };
+
+        for y in 0..height {
+            let row = unsafe { fb_ptr.add(y * stride) };
+            for x in 0..width {
+                unsafe { *row.add(x) = blue };
+            }
+        }
+    }
+
     Status::SUCCESS
 }
+
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
