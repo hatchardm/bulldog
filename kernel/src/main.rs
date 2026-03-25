@@ -1,11 +1,5 @@
 //! Bulldog kernel entry point (`main.rs`).
-//!
-//! - `#![no_std]`: no standard library, only `core`.
-//! - `#![no_main]`: custom entry point via `bootloader_api::entry_point!`.
-//! - Configures bootloader stack size and memory mappings.
-//! - Initializes framebuffer, writer, logger, and kernel subsystems.
-//! - Hands off to `kernel_init` for paging/APIC setup.
-//! - Drops into `hlt_loop` as the idle routine.
+
 
 #![no_std]
 #![no_main]
@@ -13,11 +7,8 @@
 
 extern crate alloc;
 
-use bootloader_api::{
-    config::{BootloaderConfig, Mapping},
-    entry_point,
-    info::BootInfo,
-};
+use boot_proto::BootInfo as BulldogBootInfo;
+
 use core::panic::PanicInfo;
 use x86_64::instructions::port::Port;
 use alloc::string::ToString;
@@ -39,38 +30,29 @@ use log::{info, error};
 use log::LevelFilter;
 use x86_64::VirtAddr;
 
-/// Bootloader configuration.
-/// - Kernel stack size: 100 KiB
-/// - Physical memory mapping: dynamic
-/// - Framebuffer mapping: dynamic
-const CONFIG: BootloaderConfig = {
-    let mut config = BootloaderConfig::new_default();
-    config.kernel_stack_size = 100 * 1024;
-    config.mappings.physical_memory = Some(Mapping::Dynamic);
-    config.mappings.framebuffer = Mapping::Dynamic;
-    config
-};
+#[no_mangle]
+static mut KERNEL_STACK: [u8; 100 * 1024] = [0; 100 * 1024];
 
-/// Kernel entry point invoked by the bootloader.
-/// 
-/// - Initializes framebuffer and writer.
-/// - Prints boot banner.
-/// - Sets up logging.
-/// - Runs glyph diagnostics.
-/// - Calls `kernel_init` for paging/APIC setup.
-/// - Drops into `hlt_loop` idle routine.
-entry_point!(kernel_main, config = &CONFIG);
 
-fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
+#[no_mangle]
+pub extern "C" fn bulldog_entry(boot_info: &'static mut BulldogBootInfo) -> ! {
+    kernel_main(boot_info)
+}
+
+
+fn kernel_main(boot_info: &'static mut BulldogBootInfo) -> ! {
     // 🎨 Framebuffer setup
-    let framebuffer = boot_info.framebuffer.as_mut().expect("BootInfo.framebuffer must be present");
-    let mut fb = KernelFramebuffer::from_bootloader(framebuffer);
+    let framebuffer = boot_info
+        .framebuffer
+        .as_mut()
+        .expect("BootInfo.framebuffer must be present");
+
+    let mut fb = KernelFramebuffer::from_bulldog(framebuffer);
     fb.clear_fast(BLACK);
 
     // ✍️ Initialize WRITER
     writer::framebuffer_init(&mut fb);
     set_framebuffer_ready(true);
-
 
     // 🐾 Boot banner
     if let Some(w) = WRITER.lock().as_mut() {
@@ -80,22 +62,21 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
 
     if let Some(w) = WRITER.lock().as_mut() {
-    #[cfg(feature = "syscall")]
-    let _ = writeln!(w, "[feature] syscall ENABLED");
-    #[cfg(not(feature = "syscall"))]
-    let _ = writeln!(w, "[feature] syscall DISABLED");
+        #[cfg(feature = "syscall")]
+        let _ = writeln!(w, "[feature] syscall ENABLED");
+        #[cfg(not(feature = "syscall"))]
+        let _ = writeln!(w, "[feature] syscall DISABLED");
 
-    #[cfg(feature = "syscall_tests")]
-    let _ = writeln!(w, "[feature] syscall_tests ENABLED");
-    #[cfg(not(feature = "syscall_tests"))]
-    let _ = writeln!(w, "[feature] syscall_tests DISABLED");
-}
+        #[cfg(feature = "syscall_tests")]
+        let _ = writeln!(w, "[feature] syscall_tests ENABLED");
+        #[cfg(not(feature = "syscall_tests"))]
+        let _ = writeln!(w, "[feature] syscall_tests DISABLED");
+    }
 
     // 🪵 Logging
     logger_init(LevelFilter::Info);
     info!("Exited logger_init");
     info!("Framebuffer format: {:?}, size: {}x{}", fb.pixel_format, fb.width, fb.height);
-    
 
     // 🔠 Glyph diagnostics
     if let Some(glyph) = get_glyph('A') {
@@ -103,26 +84,20 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
 
     // ✅ Prepare memory inputs for kernel_init
-    let phys_mem_offset = VirtAddr::new(
-        boot_info.physical_memory_offset.into_option()
-            .expect("BootInfo must provide physical memory offset")
-    );
-    let memory_regions: &'static [bootloader_api::info::MemoryRegion] = &boot_info.memory_regions;
+    let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
+
+    // NOTE: later we’ll switch kernel_init to use boot_proto::MemoryRegion
+    let memory_regions = boot_info.memory_regions;
 
     match kernel_init(memory_regions, phys_mem_offset) {
         Ok(_) => info!("kernel_init completed successfully"),
         Err(e) => error!("kernel_init failed: {:?}", e),
     }
 
-
-    
-
     info!("Returned to main");
-    
-  
-    
     hlt_loop();
 }
+
 
 /// Panic handler.
 /// Prints panic info over serial port, then halts in `hlt_loop`.

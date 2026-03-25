@@ -20,12 +20,13 @@ extern crate alloc;
 extern crate rlibc;
 
 use alloc::vec::Vec;
-use bootloader_api::info::MemoryRegion;
+use boot_proto::MemoryRegion;   // ← updated
 use log::{info, debug, error};
 use x86_64::{
     PhysAddr, VirtAddr,
     structures::paging::{
-        mapper::MapToError, mapper::Mapper, FrameAllocator, Page, PageTableFlags, PhysFrame, Size4KiB, Translate,
+        mapper::MapToError, mapper::Mapper, FrameAllocator, Page, PageTableFlags,
+        PhysFrame, Size4KiB, Translate,
     },
 };
 
@@ -49,34 +50,36 @@ pub mod vfs;
 pub mod elf;
 pub mod user_mode;
 
-
 #[cfg(feature = "syscall_tests")]
 mod tests;
 
 use crate::allocator::ALLOCATOR;
 use crate::apic::{lapic_read, LapicRegister, setup_apic};
-use crate::memory::{BootInfoFrameAllocator, PreHeapAllocator, init_offset_page_table, map_lapic_mmio};
+use crate::memory::{
+    BootInfoFrameAllocator, PreHeapAllocator,
+    init_offset_page_table, map_lapic_mmio
+};
 use crate::syscall::fd::init_fd_table_with_std;
 use crate::vfs::init::vfs_init;
+
 /// Kernel initialization routine.
-/// 
+///
 /// - Disables legacy PIC.
 /// - Sets up paging and frame allocator.
 /// - Initializes heap.
 /// - Loads GDT and IDT.
 /// - Maps LAPIC MMIO and IST stack.
 /// - Configures APIC and enables interrupts.
-/// 
+///
 /// Returns `Ok(())` if initialization succeeds, or a `MapToError` if paging fails.
 pub fn kernel_init(
-    memory_regions: &'static [MemoryRegion],
+    memory_regions: &'static [MemoryRegion],   // ← updated
     phys_mem_offset: VirtAddr,
 ) -> Result<(), MapToError<Size4KiB>> {
     use crate::{gdt, interrupts, memory, stack};
 
     disable_pic();
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("Creating mapper");}
+    info!("Creating mapper");
     let mut mapper = unsafe { init_offset_page_table(phys_mem_offset) };
 
     // Log memory regions directly
@@ -87,8 +90,7 @@ pub fn kernel_init(
         );
     }
 
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("Creating pre-heap frame allocator");}
+    info!("Creating pre-heap frame allocator");
     let (temp_frames, memory_map) = unsafe { BootInfoFrameAllocator::init_temp(memory_regions) };
 
     let mut temp_allocator = PreHeapAllocator {
@@ -97,22 +99,16 @@ pub fn kernel_init(
         next: 0,
     };
 
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("Initializing heap");}
+    info!("Initializing heap");
     allocator::init_heap(&mut mapper, &mut temp_allocator).expect("Heap initialization failed");
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("Heap initialized");}
+    info!("Heap initialized");
 
-    init_fd_table_with_std(); // safe to use Box & BTreeMap now
+    init_fd_table_with_std();
 
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("Finalizing frame allocator from temp allocator");}
+    info!("Finalizing frame allocator from temp allocator");
     let frames = temp_allocator.into_vec();
     let mut frame_allocator = BootInfoFrameAllocator::new(memory_map, frames);
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("Frame allocator ready");}
-
-    // Optional: identity-map framebuffer region here if needed
+    info!("Frame allocator ready");
 
     debug!("Logging memory regions with virt addresses");
     for region in memory_regions.iter() {
@@ -127,27 +123,22 @@ pub fn kernel_init(
     gdt::init();
     interrupts::init_idt();
 
-     // 🧩 Register syscall handler BEFORE enabling interrupts
+    // Syscall handler
     crate::syscall::init_syscall();
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("Syscall handler ready");}
+    info!("Syscall handler ready");
 
-
-     #[cfg(feature = "syscall_tests")]
-     {
-     vfs_init();
-     tests::syscall_harness::run_syscall_tests();
-     }
-
+    #[cfg(feature = "syscall_tests")]
+    {
+        vfs_init();
+        tests::syscall_harness::run_syscall_tests();
+    }
 
     // APIC MMIO mapping
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("Mapping LAPIC MMIO");}
+    info!("Mapping LAPIC MMIO");
     map_lapic_mmio(&mut mapper, &mut frame_allocator);
 
     // APIC IST stack mapping
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("Mapping LAPIC IST stack");}
+    info!("Mapping LAPIC IST stack");
     let lapic_stack_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(stack::LAPIC_STACK.0) });
     let lapic_stack_end = lapic_stack_start + gdt::STACK_SIZE;
     let lapic_stack_range = Page::range_inclusive(
@@ -161,8 +152,7 @@ pub fn kernel_init(
         debug!("Used frame: {:#x}", frame.start_address().as_u64());
     }
 
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("Pre-mark LAPIC stack frames");}
+    info!("Pre-mark LAPIC stack frames");
     for page in lapic_stack_range.clone() {
         if let Some(phys) = mapper.translate_addr(page.start_address()) {
             let frame = PhysFrame::containing_address(phys);
@@ -201,20 +191,16 @@ pub fn kernel_init(
     setup_apic();
 
     let count = lapic_read(LapicRegister::CURRENT_COUNT);
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("LAPIC CURRENT COUNT: {}", count);}
+    info!("LAPIC CURRENT COUNT: {}", count);
 
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("Enabling interrupts");}
+    info!("Enabling interrupts");
     x86_64::instructions::interrupts::enable();
-    #[cfg(not(feature = "syscall_tests"))]
-    {info!("Exiting init");}
+    info!("Exiting init");
 
     Ok(())
 }
 
 /// Disable legacy PIC by masking all IRQs.
-/// Ensures APIC is the sole interrupt controller.
 pub fn disable_pic() {
     unsafe {
         let mut pic1 = x86_64::instructions::port::Port::new(0x21);
@@ -225,21 +211,13 @@ pub fn disable_pic() {
 }
 
 /// Allocator error handler.
-/// Logs and panics on allocation failure.
 #[alloc_error_handler]
 fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
     error!("PANIC: allocation error — size: {}, align: {}", layout.size(), layout.align());
     panic!("allocation error: {:?}", layout)
 }
 
-/// Halt loop: the kernel’s idle routine.
-/// 
-/// - Puts the CPU into a low‑power state (`hlt`) until the next interrupt.
-/// - Uses a watchdog to detect stalls in the tick counter.
-/// - Runs a periodic health check to log kernel liveness.
-/// 
-/// Safety: must only be called once interrupts and the LAPIC timer are configured.
-/// Otherwise the CPU will halt indefinitely without waking.
+/// Kernel idle loop.
 pub fn hlt_loop() -> ! {
     let mut wd = crate::time::Watchdog::new(5000u64, 3u32, 2u32);
 
@@ -247,11 +225,11 @@ pub fn hlt_loop() -> ! {
         unsafe { core::arch::asm!("hlt"); }
         wd.check();
 
-        // Only run health checks if not in syscall_tests mode
         #[cfg(not(feature = "syscall_tests"))]
         crate::time::health_check(1000);
     }
 }
+
 
 
 
