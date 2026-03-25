@@ -17,21 +17,45 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
     let msg = CStr16::from_str_with_buf("Bulldog UEFI bootloader starting...\n", &mut buf).unwrap();
     let _ = stdout.output_string(msg);
 
-    // STEP 2: Open GOP using the correct UEFI API
-    let gop: &mut GraphicsOutput = unsafe {
-    st.boot_services()
-        .open_protocol::<GraphicsOutput>(
-            OpenProtocolParams {
-                handle,
-                agent: handle,
-                controller: None,
-            },
-            OpenProtocolAttributes::Exclusive,   // <-- FIXED
-        )
-        .expect("Failed to open GOP")
-        .get()
-        .expect("GOP pointer was null")
-};
+       // STEP 2: Open GOP using the correct UEFI API
+    let gop_ref = unsafe {
+        st.boot_services()
+            .open_protocol::<GraphicsOutput>(
+                OpenProtocolParams {
+                    handle,
+                    agent: handle,
+                    controller: None,
+                },
+                OpenProtocolAttributes::Exclusive,
+            )
+            .expect("Failed to open GOP")
+            .get()
+            .expect("GOP pointer was null")
+    };
+
+    // We know we're the only user, so we can safely cast &T -> &mut T here.
+    let gop: &mut GraphicsOutput = unsafe { &mut *(gop_ref as *const _ as *mut GraphicsOutput) };
+
+    let mode = gop.current_mode_info();
+    let mut fb = gop.frame_buffer();
+
+    let (width, height) = mode.resolution();
+    let stride = mode.stride();
+
+    let pixel_format = match mode.pixel_format() {
+        uefi::proto::console::gop::PixelFormat::Rgb => PixelFormat::Rgb,
+        uefi::proto::console::gop::PixelFormat::Bgr => PixelFormat::Bgr,
+        _ => PixelFormat::Rgb,
+    };
+
+    let _fb_info = Framebuffer {
+        addr: fb.as_mut_ptr(),
+        width,
+        height,
+        stride,
+        pixel_format,
+    };
+
 
 
     let mode = gop.current_mode_info();
