@@ -63,28 +63,29 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
     };
 
     // ⭐ NOW paint the screen blue — after _fb_info exists
-    {
-        let fb_ptr = _fb_info.addr as *mut u32;
-        let width = _fb_info.width;
-        let height = _fb_info.height;
-        let stride = _fb_info.stride;
+    // Paint the screen blue
+{
+    let fb_ptr = _fb_info.addr as *mut u32;
+    let width = _fb_info.width;
+    let height = _fb_info.height;
+    let stride = _fb_info.stride;
 
-        let blue = match _fb_info.pixel_format {
-    PixelFormat::Rgb => 0x0000FF,
-    PixelFormat::Bgr => 0xFF0000,
-    _ => return Status::SUCCESS, // unsupported formats: just exit cleanly
-};
+    let blue = match _fb_info.pixel_format {
+        PixelFormat::Rgb => 0x0000FF,
+        PixelFormat::Bgr => 0xFF0000,
+        _ => return Status::SUCCESS, // unsupported formats
+    };
 
-
-        for y in 0..height {
-            let row = unsafe { fb_ptr.add(y * stride) };
-            for x in 0..width {
-                unsafe { *row.add(x) = blue };
-            }
+    for y in 0..height {
+        let row = unsafe { fb_ptr.add(y * stride) };
+        for x in 0..width {
+            unsafe { *row.add(x) = blue };
         }
     }
+}
 
-    Status::SUCCESS
+
+    loop {}
 }
 
 
