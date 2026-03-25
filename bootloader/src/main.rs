@@ -10,12 +10,9 @@ use uefi::helpers;
 use boot_proto::{Framebuffer, PixelFormat};
 
 #[entry]
-fn efi_main() -> Status {
-    // Initialise UEFI helper system (sets up global system table, logging, etc.)
+fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
+    // Initialise UEFI helper system
     helpers::init().expect("UEFI init failed");
-
-    // Get the system table from helpers
-    let mut st = helpers::system_table();
 
     // First message
     {
