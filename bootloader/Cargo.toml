@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-uefi = "0.37.0"
+uefi = "0.28.0"
 log = "0.4"
 boot-proto = { path = "../boot-proto" }
 
