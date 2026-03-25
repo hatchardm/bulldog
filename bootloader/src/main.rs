@@ -2,16 +2,17 @@
 #![no_main]
 
 use core::panic::PanicInfo;
-use uefi::data_types::CStr16;
 use uefi::prelude::*;
+use uefi::data_types::CStr16;
 use uefi::proto::console::gop::GraphicsOutput;
+use uefi::helpers::init as uefi_init;
 
 use boot_proto::{Framebuffer, PixelFormat};
 
 #[entry]
 fn efi_main(_handle: Handle, mut st: SystemTable<Boot>) -> Status {
-    // Initialise uefi-services (sets up logging, panic, and extension traits)
-    uefi_services::init(&mut st).expect("Failed to init uefi-services");
+    // Initialise UEFI helper system (replaces uefi-services)
+    uefi_init(&mut st).expect("UEFI init failed");
 
     // First message
     {
@@ -22,10 +23,10 @@ fn efi_main(_handle: Handle, mut st: SystemTable<Boot>) -> Status {
         let _ = stdout.output_string(msg);
     }
 
-    // Locate GOP via uefi-services extension (gives &mut GraphicsOutput)
-    let bt = st.boot_services();
+    // Locate GOP safely (no casting needed)
     let gop = unsafe {
-        bt.locate_protocol::<GraphicsOutput>()
+        st.boot_services()
+            .locate_protocol::<GraphicsOutput>()
             .expect("Failed to locate GOP")
             .get()
             .expect("GOP pointer was null")
@@ -67,6 +68,7 @@ fn efi_main(_handle: Handle, mut st: SystemTable<Boot>) -> Status {
 fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
+
 
 
 

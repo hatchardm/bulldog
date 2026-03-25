@@ -8,7 +8,6 @@ edition = "2024"
 
 [dependencies]
 uefi = "0.26.0"
-uefi-services = "0.26.0"
 log = "0.4"
 boot-proto = { path = "../boot-proto" }
 
