@@ -42,6 +42,9 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
     let gop: &mut GraphicsOutput =
         unsafe { &mut *(gop_ref as *const _ as *mut GraphicsOutput) };
 
+    gop.set_mode(&gop.modes().next().unwrap()).unwrap();
+
+
     let mode = gop.current_mode_info();
     let mut fb = gop.frame_buffer();
 
