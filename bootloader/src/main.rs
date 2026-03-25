@@ -5,18 +5,14 @@ use core::panic::PanicInfo;
 use uefi::prelude::*;
 use uefi::data_types::CStr16;
 use uefi::proto::console::gop::GraphicsOutput;
-use uefi::helpers::init as uefi_init;
+use uefi::helpers;
 
 use boot_proto::{Framebuffer, PixelFormat};
 
 #[entry]
-fn efi_main() -> Status {
-    // Get system table (new API in uefi 0.37)
-    let st = uefi::table::system_table();
-    let mut st = unsafe { st.as_mut() };
-
+fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
     // Initialise UEFI helper system
-    uefi_init(&mut st).expect("UEFI init failed");
+    helpers::init().expect("UEFI init failed");
 
     // First message
     {
@@ -72,6 +68,7 @@ fn efi_main() -> Status {
 fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
+
 
 
 
