@@ -18,23 +18,23 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
     let _ = stdout.output_string(msg);
 
     // STEP 2: Open GOP using the correct UEFI API
-    let gop = unsafe {
-    st.boot_services()
-        .open_protocol::<GraphicsOutput>(
-            OpenProtocolParams {
-                handle,
-                agent: handle,
-                controller: None,
-            },
-            OpenProtocolAttributes::GetProtocol,
-        )
-        .expect("Failed to open GOP")
-        .get()
-};
-
+    let gop: &mut GraphicsOutput = unsafe {
+        st.boot_services()
+            .open_protocol::<GraphicsOutput>(
+                OpenProtocolParams {
+                    handle,
+                    agent: handle,
+                    controller: None,
+                },
+                OpenProtocolAttributes::GetProtocol,
+            )
+            .expect("Failed to open GOP")
+            .get()
+            .expect("GOP pointer was null")
+    };
 
     let mode = gop.current_mode_info();
-    let fb = gop.frame_buffer();
+    let mut fb = gop.frame_buffer();
 
     let (width, height) = mode.resolution();
     let stride = mode.stride();
@@ -64,6 +64,7 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
 fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
+
 
 
 
