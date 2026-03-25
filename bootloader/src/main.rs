@@ -2,15 +2,17 @@
 #![no_main]
 
 use core::panic::PanicInfo;
-use uefi::prelude::*;
 use uefi::data_types::CStr16;
+use uefi::prelude::*;
 use uefi::proto::console::gop::GraphicsOutput;
-use uefi::table::boot::{OpenProtocolAttributes, OpenProtocolParams};
 
 use boot_proto::{Framebuffer, PixelFormat};
 
 #[entry]
-fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
+fn efi_main(_handle: Handle, mut st: SystemTable<Boot>) -> Status {
+    // Initialise uefi-services (sets up logging, panic, and extension traits)
+    uefi_services::init(&mut st).expect("Failed to init uefi-services");
+
     // First message
     {
         let stdout = st.stdout();
@@ -20,51 +22,36 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
         let _ = stdout.output_string(msg);
     }
 
-    // GOP + framebuffer in its own scope so the borrow on st.boot_services() ends
-    {
-        let gop_scoped = unsafe {
-            st.boot_services()
-                .open_protocol::<GraphicsOutput>(
-                    OpenProtocolParams {
-                        handle,
-                        agent: handle,
-                        controller: None,
-                    },
-                    OpenProtocolAttributes::Exclusive,
-                )
-                .expect("Failed to open GOP")
-        };
+    // Locate GOP via uefi-services extension (gives &mut GraphicsOutput)
+    let bt = st.boot_services();
+    let gop = unsafe {
+        bt.locate_protocol::<GraphicsOutput>()
+            .expect("Failed to locate GOP")
+            .get()
+            .expect("GOP pointer was null")
+    };
 
-        let gop_ref = gop_scoped.get().expect("GOP pointer was null");
+    let mode = gop.current_mode_info();
+    let mut fb = gop.frame_buffer();
 
-        // We know we're the only user, so cast &T -> &mut T here.
-        let gop: &mut GraphicsOutput =
-            unsafe { &mut *(gop_ref as *const _ as *mut GraphicsOutput) };
+    let (width, height) = mode.resolution();
+    let stride = mode.stride();
 
-        let mode = gop.current_mode_info();
-        let mut fb = gop.frame_buffer();
+    let pixel_format = match mode.pixel_format() {
+        uefi::proto::console::gop::PixelFormat::Rgb => PixelFormat::Rgb,
+        uefi::proto::console::gop::PixelFormat::Bgr => PixelFormat::Bgr,
+        _ => PixelFormat::Rgb,
+    };
 
-        let (width, height) = mode.resolution();
-        let stride = mode.stride();
+    let _fb_info = Framebuffer {
+        addr: fb.as_mut_ptr(),
+        width,
+        height,
+        stride,
+        pixel_format,
+    };
 
-        let pixel_format = match mode.pixel_format() {
-            uefi::proto::console::gop::PixelFormat::Rgb => PixelFormat::Rgb,
-            uefi::proto::console::gop::PixelFormat::Bgr => PixelFormat::Bgr,
-            _ => PixelFormat::Rgb,
-        };
-
-        let _fb_info = Framebuffer {
-            addr: fb.as_mut_ptr(),
-            width,
-            height,
-            stride,
-            pixel_format,
-        };
-
-        // gop_scoped is dropped here, releasing the borrow on st.boot_services()
-    }
-
-    // Second message, after GOP scope is done
+    // Second message
     {
         let stdout = st.stdout();
         let mut buf2 = [0u16; 128];
@@ -80,6 +67,7 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
 fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
+
 
 
 

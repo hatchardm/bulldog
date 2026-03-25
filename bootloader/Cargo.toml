@@ -8,8 +8,9 @@ edition = "2024"
 
 [dependencies]
 uefi = "0.28.0"
+uefi-services = "0.28.0"
+log = "0.4"
 boot-proto = { path = "../boot-proto" }
-
 
 [[bin]]
 name = "bulldog-bootloader"
@@ -20,3 +21,9 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+
+[unstable]
+build-std = ["core", "alloc", "compiler_builtins"]
+
+[target.x86_64-unknown-uefi]
+runner = "uefi-run"
