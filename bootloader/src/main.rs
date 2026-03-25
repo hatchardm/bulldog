@@ -40,9 +40,12 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
 
     let gop_ref = gop_scoped.get().expect("GOP pointer was null");
     let gop: &mut GraphicsOutput =
-        unsafe { &mut *(gop_ref as *const _ as *mut GraphicsOutput) };
+    unsafe { &mut *(gop_ref as *const _ as *mut GraphicsOutput) };
 
-    gop.set_mode(&gop.modes().next().unwrap()).unwrap();
+    // ⭐ Switch to graphics mode
+    let mode = gop.modes(st.boot_services()).next().unwrap();
+    gop.set_mode(&mode).unwrap();
+
 
 
     let mode = gop.current_mode_info();
