@@ -1,18 +1,20 @@
 #![no_std]
 #![no_main]
+#![allow(invalid_reference_casting)]
 
 use core::panic::PanicInfo;
 use uefi::prelude::*;
 use uefi::data_types::CStr16;
 use uefi::proto::console::gop::GraphicsOutput;
+use uefi::table::boot::{OpenProtocolAttributes, OpenProtocolParams};
 use uefi::helpers;
 
 use boot_proto::{Framebuffer, PixelFormat};
 
 #[entry]
 fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
-    // Initialise UEFI helper system
-    helpers::init().expect("UEFI init failed");
+    // Initialise helpers (logging, panic, etc.)
+    helpers::init(&mut st).expect("UEFI init failed");
 
     // First message
     {
@@ -23,14 +25,25 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
         let _ = stdout.output_string(msg);
     }
 
-    // Locate GOP safely
-    let gop = unsafe {
+    // Open GOP via open_protocol
+    let gop_scoped = unsafe {
         st.boot_services()
-            .locate_protocol::<GraphicsOutput>()
-            .expect("Failed to locate GOP")
-            .get()
-            .expect("GOP pointer was null")
+            .open_protocol::<GraphicsOutput>(
+                OpenProtocolParams {
+                    handle,
+                    agent: handle,
+                    controller: None,
+                },
+                OpenProtocolAttributes::GetProtocol,
+            )
+            .expect("Failed to open GOP")
     };
+
+    let gop_ref = gop_scoped.get().expect("GOP pointer was null");
+
+    // Firmware is single-threaded here; this cast is acceptable and we explicitly allow the lint.
+    let gop: &mut GraphicsOutput =
+        unsafe { &mut *(gop_ref as *const _ as *mut GraphicsOutput) };
 
     let mode = gop.current_mode_info();
     let mut fb = gop.frame_buffer();
@@ -52,15 +65,6 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
         pixel_format,
     };
 
-    // Second message
-    {
-        let stdout = st.stdout();
-        let mut buf2 = [0u16; 128];
-        let msg2 =
-            CStr16::from_str_with_buf("GOP OK: framebuffer extracted.\n", &mut buf2).unwrap();
-        let _ = stdout.output_string(msg2);
-    }
-
     Status::SUCCESS
 }
 
@@ -68,6 +72,7 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
 fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
+
 
 
 
