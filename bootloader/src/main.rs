@@ -70,9 +70,11 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
         let stride = _fb_info.stride;
 
         let blue = match _fb_info.pixel_format {
-            PixelFormat::Rgb => 0x0000FF,
-            PixelFormat::Bgr => 0xFF0000,
-        };
+    PixelFormat::Rgb => 0x0000FF,
+    PixelFormat::Bgr => 0xFF0000,
+    _ => return Status::SUCCESS, // unsupported formats: just exit cleanly
+};
+
 
         for y in 0..height {
             let row = unsafe { fb_ptr.add(y * stride) };
