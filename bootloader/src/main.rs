@@ -19,18 +19,19 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
 
     // STEP 2: Open GOP using the correct UEFI API
     let gop = unsafe {
-        st.boot_services()
-            .open_protocol::<GraphicsOutput>(
-                OpenProtocolParams {
-                    handle,
-                    agent: handle,
-                    controller: None,
-                },
-                OpenProtocolAttributes::GetProtocol,
-            )
-            .expect("Failed to open GOP")
-            .interface
-    };
+    st.boot_services()
+        .open_protocol::<GraphicsOutput>(
+            OpenProtocolParams {
+                handle,
+                agent: handle,
+                controller: None,
+            },
+            OpenProtocolAttributes::GetProtocol,
+        )
+        .expect("Failed to open GOP")
+        .get()
+};
+
 
     let mode = gop.current_mode_info();
     let fb = gop.frame_buffer();
