@@ -1,0 +1,5 @@
+[unstable]
+build-std = ["core", "alloc", "compiler_builtins"]
+
+[target.x86_64-unknown-uefi]
+runner = "uefi-run"
