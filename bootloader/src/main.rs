@@ -24,6 +24,15 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
         let _ = stdout.output_string(msg);
     }
 
+    {
+    let stdout = st.stdout();
+    let mut buf = [0u16; 64];
+    let msg =
+        CStr16::from_str_with_buf("Reached point A\n", &mut buf).unwrap();
+    let _ = stdout.output_string(msg);
+    }
+
+
     // Open GOP
     let gop_scoped = unsafe {
         st.boot_services()

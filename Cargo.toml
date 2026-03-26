@@ -1,33 +1,11 @@
-[package]
-name = "bulldog"
-version = "0.1.0"
-edition = "2024"
-
-[build-dependencies]
-kernel = { path = "kernel", artifact = "bin", target = "x86_64-unknown-none" }
-
-[dependencies]
-ovmf-prebuilt = "0.1.0-alpha"
-
 [workspace]
 members = [
     "kernel",
     "bulldog-syscall",
- #   "user/hello",
     "boot-proto",
+    "bootloader",
 ]
 
-[profile.dev]
-debug = true
-panic = "abort"
+resolver = "2"
 
-[profile.release]
-panic = "abort"
-
-
-
-[features]
-default = []
-syscall_tests = ["kernel/syscall_tests"]
-serial_log     = ["kernel/serial_log"]
 
