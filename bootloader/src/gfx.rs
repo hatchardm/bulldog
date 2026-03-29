@@ -1,32 +1,20 @@
-#![no_std]
-#![no_main]
-
-use log::info;
-use uefi::prelude::*;
-use uefi::proto::console::gop::GraphicsOutput;
 use uefi::boot::{self, SearchType};
+use uefi::proto::console::gop::GraphicsOutput;
 use uefi::Identify;
+use uefi::prelude::*;
 
-#[entry]
-fn main() -> Status {
-    // Initialize logger + panic handler
-    uefi::helpers::init().unwrap();
+pub fn init_and_clear_blue(st: &uefi::SystemTable<uefi::Boot>) {
+    let mut stdout = st.stdout();
+    stdout.write_str("GOP: locating handles...\n").unwrap();
 
-    info!("Bulldog UEFI bootloader starting...");
-    info!("Reached point A");
-
-    // Access system table using the actual GitHub API
-    let st = uefi::table::system_table();
     let bt = st.boot_services();
-
-    info!("GOP: locating handles...");
 
     let handles = bt
         .locate_handle_buffer(SearchType::ByProtocol(&GraphicsOutput::GUID))
         .expect("locate_handle_buffer failed")
         .handles();
 
-    info!("GOP: found {} handle(s)", handles.len());
+    stdout.write_str("GOP: found handle(s)\n").unwrap();
 
     let handle = handles[0];
 
@@ -55,16 +43,12 @@ fn main() -> Status {
     for y in 0..height {
         for x in 0..width {
             let idx = (y * stride + x) * 4;
-            fb_bytes[idx + 0] = 0xFF; // blue
+            fb_bytes[idx + 0] = 0xFF;
             fb_bytes[idx + 1] = 0x00;
             fb_bytes[idx + 2] = 0x00;
             fb_bytes[idx + 3] = 0x00;
         }
     }
 
-    info!("GOP: framebuffer filled blue");
-    info!("Reached point B (after GOP)");
-
-    Status::SUCCESS
+    stdout.write_str("GOP: framebuffer filled blue\n").unwrap();
 }
-
