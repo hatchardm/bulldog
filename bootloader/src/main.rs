@@ -1,69 +1,34 @@
 #![no_std]
 #![no_main]
 
+use core::time::Duration;
 use log::info;
+use uefi::boot;
 use uefi::prelude::*;
-use uefi::proto::console::gop::GraphicsOutput;
-use uefi::boot::{self, SearchType};
-use uefi::Identify;
+
+mod gop;
 
 #[entry]
 fn main() -> Status {
-    // Initialize logger + panic handler
     uefi::helpers::init().unwrap();
 
     info!("Bulldog UEFI bootloader starting...");
     info!("Reached point A");
 
-    // Access system table using the actual GitHub API
-    let st = uefi::table::system_table();
-    let bt = st.boot_services();
+    let mut ctx = match gop::init() {
+        Ok(c) => c,
+        Err(status) => return status,
+    };
 
-    info!("GOP: locating handles...");
+    info!("GOP: initialized, resolution {}x{}", ctx.width, ctx.height);
 
-    let handles = bt
-        .locate_handle_buffer(SearchType::ByProtocol(&GraphicsOutput::GUID))
-        .expect("locate_handle_buffer failed")
-        .handles();
-
-    info!("GOP: found {} handle(s)", handles.len());
-
-    let handle = handles[0];
-
-    let gop = unsafe {
-        bt.open_protocol::<GraphicsOutput>(
-            boot::OpenProtocolParams {
-                handle,
-                agent: handle,
-                controller: None,
-            },
-            boot::OpenProtocolAttributes::GetProtocol,
-        )
-    }
-    .expect("open_protocol failed");
-
-    let gop = gop.interface();
-
-    let mode = gop.current_mode();
-    let info = mode.info();
-    let (width, height) = info.resolution();
-    let stride = info.stride();
-
-    let mut fb = gop.frame_buffer();
-    let fb_bytes = unsafe { fb.as_mut_slice() };
-
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * stride + x) * 4;
-            fb_bytes[idx + 0] = 0xFF; // blue
-            fb_bytes[idx + 1] = 0x00;
-            fb_bytes[idx + 2] = 0x00;
-            fb_bytes[idx + 3] = 0x00;
-        }
-    }
+    // New: use helper
+    ctx.fill_color(0x00, 0x00, 0xFF); // blue
 
     info!("GOP: framebuffer filled blue");
     info!("Reached point B (after GOP)");
+
+    boot::stall(Duration::from_secs(5));
 
     Status::SUCCESS
 }
