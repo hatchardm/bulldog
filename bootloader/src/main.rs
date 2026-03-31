@@ -7,6 +7,9 @@ use uefi::boot;
 use uefi::prelude::*;
 
 mod gop;
+mod framebuffer;
+mod color;
+
 
 #[entry]
 fn main() -> Status {
@@ -20,10 +23,23 @@ fn main() -> Status {
         Err(status) => return status,
     };
 
-    info!("GOP: initialized, resolution {}x{}", ctx.width, ctx.height);
+    info!("GOP: initialized, resolution {}x{}", ctx.fb.width, ctx.fb.height);
 
-    // New: use helper
-    ctx.fill_color(0x00, 0x00, 0xFF); // blue
+    ctx.fb.clear(); // clears to black
+    ctx.fb.fill_color(color::Color::BLUE); // then fill blue
+
+    ctx.fb.draw_rect(50, 50, 200, 100, color::Color::RED);
+
+    // Diagonal line
+    ctx.fb.draw_line(0, 0, ctx.fb.width as isize - 1, ctx.fb.height as isize - 1, color::Color::WHITE);
+
+    // Horizontal line
+    ctx.fb.draw_line(0, 200, ctx.fb.width as isize - 1, 200, color::Color::GREEN);
+
+    // Vertical line
+    ctx.fb.draw_line(300, 0, 300, ctx.fb.height as isize - 1, color::Color::RED);
+
+
 
     info!("GOP: framebuffer filled blue");
     info!("Reached point B (after GOP)");
@@ -32,4 +48,3 @@ fn main() -> Status {
 
     Status::SUCCESS
 }
-
