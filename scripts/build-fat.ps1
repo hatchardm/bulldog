@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$root = "C:\Users\markh\bulldog"
+$root = "C:\Users\hatch\dev\bulldog"
 $bootloader = "$root\bootloader\target\x86_64-unknown-uefi\debug\bulldog-bootloader.efi"
 $img = "$root\fat.img"
 
@@ -22,4 +22,5 @@ mmd -i $img ::/EFI/BOOT
 
 # Copy bootloader
 mcopy -i $img $bootloader ::/EFI/BOOT/BOOTX64.EFI
+
 
