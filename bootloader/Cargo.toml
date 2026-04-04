@@ -7,7 +7,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-uefi = { git = "https://github.com/rust-osdev/uefi-rs", features = ["panic_handler", "logger"] }
+uefi = { 
+    git = "https://github.com/rust-osdev/uefi-rs",
+    features = ["panic_handler", "logger", "entry"]
+}
+
+
 
 log = "0.4"
 boot-proto = { path = "../boot-proto" }
