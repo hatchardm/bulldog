@@ -14,5 +14,17 @@ impl Color {
     pub const WHITE: Color = Color::new(255, 255, 255);
     pub const RED:   Color = Color::new(255, 0, 0);
     pub const GREEN: Color = Color::new(0, 255, 0);
-    pub const BLUE:  Color = Color::new(0, 0, 255);
+    pub const BLUE: Color = Color::new(0, 0, 255);
+
+
+    pub fn from_u32(v: u32) -> Self {
+        Color {
+            r: ((v >> 16) & 0xFF) as u8,
+            g: ((v >> 8) & 0xFF) as u8,
+            b: (v & 0xFF) as u8,
+        }
+    }
 }
+
+
+
