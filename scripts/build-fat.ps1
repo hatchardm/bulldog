@@ -20,8 +20,6 @@ mformat -i $img -f 1440 ::
 mmd -i $img ::/EFI
 mmd -i $img ::/EFI/BOOT
 
-# Copy font file
-mcopy -i $img "$root\font8x16.bin" ::
 
 # Copy bootloader
 mcopy -i $img $bootloader ::/EFI/BOOT/BOOTX64.EFI

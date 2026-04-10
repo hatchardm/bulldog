@@ -1,34 +1,52 @@
-#![no_std]
 #![no_main]
+#![no_std]
 
-extern crate alloc;
+use uefi::prelude::*;
+use log::info;
 
 mod gop;
 mod framebuffer;
+mod console;
 mod color;
 mod text;
+mod boot;
 
-use core::time::Duration;
-use log::info;
-use uefi::boot;
-use uefi::prelude::*;
-use text::{load_font, write_str};
-use crate::color::Color;
+use gop::init as init_graphics;
+use text::load_font;
+use console::Console;
+use color::Color;
 
+use uefi::proto::console::text::Input;
+use uefi::boot as uefi_boot;
+
+use boot::{BootInfo, load_kernel, jump_to_kernel};
+
+fn wait_for_keypress() {
+    let handle = uefi_boot::get_handle_for_protocol::<Input>()
+        .expect("Failed to get handle for Input");
+
+    let mut input = uefi_boot::open_protocol_exclusive::<Input>(handle)
+        .expect("Failed to open Input");
+
+    loop {
+        if let Ok(Some(_key)) = input.read_key() {
+            break;
+        }
+    }
+}
 
 #[entry]
 fn main() -> Status {
-    // Initialize UEFI logging + panic handler
     uefi::helpers::init().unwrap();
-
     info!("Bulldog UEFI bootloader starting…");
 
-    //
-    // Initialize GOP using your updated gop.rs
-    //
-    let mut ctx = match gop::init() {
+    // Initialize GOP
+    let mut ctx = match init_graphics() {
         Ok(c) => c,
-        Err(status) => return status,
+        Err(e) => {
+            info!("GOP init failed: {:?}", e);
+            return Status::LOAD_ERROR;
+        }
     };
 
     info!(
@@ -36,62 +54,44 @@ fn main() -> Status {
         ctx.fb.width, ctx.fb.height, ctx.fb.stride
     );
 
+    // Snapshot framebuffer info BEFORE borrowing it mutably
+    let fb_ptr = ctx.fb.data.as_mut_ptr();
+    let fb_width = ctx.fb.width;
+    let fb_height = ctx.fb.height;
+    let fb_stride = ctx.fb.stride;
 
+    // Load font
     let font = load_font();
 
-    //
-    // Draw using your existing framebuffer API
-    //
-    ctx.fb.clear();                          // Clear screen (your API takes no args)
-    ctx.fb.fill_color(color::Color::BLUE);   // Fill entire screen blue
+    // --- Console scope (borrows &mut ctx.fb) ---
+    {
+        let mut console = Console::new(&mut ctx.fb, font);
+        console.set_color(Color::WHITE);
 
-    // Red rectangle
-    ctx.fb.draw_rect(50, 50, 200, 100, color::Color::RED);
+        console.write_str("Bulldog Bootloader\n");
+        console.write_str("Console online.\n");
 
-    // White diagonal line
-    ctx.fb.draw_line(
-        0,
-        0,
-        ctx.fb.width as isize - 1,
-        ctx.fb.height as isize - 1,
-        color::Color::WHITE,
-    );
+        console.write_str("Press any key to continue...\n");
+        wait_for_keypress();
 
-    // Green horizontal line
-    ctx.fb.draw_line(
-        0,
-        200,
-        ctx.fb.width as isize - 1,
-        200,
-        color::Color::GREEN,
-    );
+        console.write_str("Loading kernel...\n");
+        let _ = load_kernel(&mut console);
 
-    // Red vertical line
-    ctx.fb.draw_line(
-        300,
-        0,
-        300,
-        ctx.fb.height as isize - 1,
-        color::Color::RED,
-    );
+        console.write_str("Preparing kernel handover...\n");
+    }
+    // --- console dropped here ---
 
+    // Build BootInfo from snapshotted values (no borrow of ctx.fb)
+    let boot_info = BootInfo {
+        fb_ptr,
+        fb_width,
+        fb_height,
+        fb_stride,
+    };
 
-    write_str(
-    &mut ctx.fb,
-    font,
-    20,
-    20,
-    "Bulldog Bootloader\nText rendering online!",
-    Color::WHITE,
-);
-
-    info!("Drawing complete. Stalling for 5 seconds…");
-
-    boot::stall(Duration::from_secs(5));
-
-    Status::SUCCESS
+    // Kernel handover (stub)
+    jump_to_kernel(&boot_info);
 }
-
 
 
 
