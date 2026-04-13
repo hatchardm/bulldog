@@ -25,6 +25,7 @@ dependencies = [
  "boot-proto",
  "log",
  "uefi",
+ "uefi-raw",
 ]
 
 [[package]]
@@ -100,7 +101,8 @@ dependencies = [
 [[package]]
 name = "uefi"
 version = "0.37.0"
-source = "git+https://github.com/rust-osdev/uefi-rs#0f6bddc1b90b76d97edbace375fa19cc7da4352a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66ab9569afdd1e33a31d8002343aa1df594f055347b1a66136bf9dd6cbc3ec37"
 dependencies = [
  "bitflags",
  "cfg-if",

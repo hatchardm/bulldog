@@ -15,11 +15,11 @@ use gop::init as init_graphics;
 use text::load_font;
 use console::Console;
 use color::Color;
-
 use uefi::proto::console::text::Input;
 use uefi::boot as uefi_boot;
+use boot::{BootInfo, FramebufferFormat, load_kernel, jump_to_kernel, find_rsdp};
+use uefi::proto::console::gop::PixelFormat;
 
-use boot::{BootInfo, load_kernel, jump_to_kernel};
 
 fn wait_for_keypress() {
     let handle = uefi_boot::get_handle_for_protocol::<Input>()
@@ -37,6 +37,7 @@ fn wait_for_keypress() {
 
 #[entry]
 fn main() -> Status {
+
     uefi::helpers::init().unwrap();
     info!("Bulldog UEFI bootloader starting…");
 
@@ -54,11 +55,24 @@ fn main() -> Status {
         ctx.fb.width, ctx.fb.height, ctx.fb.stride
     );
 
-    // Snapshot framebuffer info BEFORE borrowing it mutably
+    // Snapshot framebuffer info BEFORE borrowing ctx.fb mutably
     let fb_ptr = ctx.fb.data.as_mut_ptr();
     let fb_width = ctx.fb.width;
     let fb_height = ctx.fb.height;
     let fb_stride = ctx.fb.stride;
+
+    let fb_format = match ctx.mode.pixel_format() {
+        PixelFormat::Rgb => FramebufferFormat::Rgb,
+        PixelFormat::Bgr => FramebufferFormat::Bgr,
+        PixelFormat::Bitmask => FramebufferFormat::Bitmask,
+        _ => FramebufferFormat::Unknown,
+    };
+
+    // RSDP (may be 0 if not found)
+    let rsdp_addr = find_rsdp().unwrap_or(0);
+    info!("RSDP address: {:#x}", rsdp_addr);
+
+
 
     // Load font
     let font = load_font();
@@ -87,11 +101,17 @@ fn main() -> Status {
         fb_width,
         fb_height,
         fb_stride,
+        fb_format,
+        rsdp_addr,
     };
 
-    // Kernel handover (stub)
     jump_to_kernel(&boot_info);
 }
 
+
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
 
 
