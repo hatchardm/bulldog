@@ -45,6 +45,23 @@ pub fn find_rsdp() -> Option<usize> {
     rsdp
 }
 
+#[repr(C, packed)]
+struct RsdpV1 {
+    signature: [u8; 8],
+    checksum: u8,
+    oem_id: [u8; 6],
+    revision: u8,
+    rsdt_address: u32,
+}
+
+pub fn acpi_revision(rsdp_addr: usize) -> Option<u8> {
+    if rsdp_addr == 0 {
+        return None;
+    }
+
+    let rsdp = unsafe { &*(rsdp_addr as *const RsdpV1) };
+    Some(rsdp.revision)
+}
 
 
 

@@ -17,7 +17,7 @@ use console::Console;
 use color::Color;
 use uefi::proto::console::text::Input;
 use uefi::boot as uefi_boot;
-use boot::{BootInfo, FramebufferFormat, load_kernel, jump_to_kernel, find_rsdp};
+use boot::{BootInfo, FramebufferFormat, load_kernel, jump_to_kernel, find_rsdp, acpi_revision};
 use uefi::proto::console::gop::PixelFormat;
 
 
@@ -71,6 +71,10 @@ fn main() -> Status {
     // RSDP (may be 0 if not found)
     let rsdp_addr = find_rsdp().unwrap_or(0);
     info!("RSDP address: {:#x}", rsdp_addr);
+
+    if let Some(rev) = acpi_revision(rsdp_addr) {
+    info!("ACPI revision: {}", rev);
+}
 
 
 
