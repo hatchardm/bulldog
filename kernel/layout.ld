@@ -1,7 +1,7 @@
-ENTRY(kernel_main)
+ENTRY(bulldog_entry)
 
 SECTIONS {
-    . = ALIGN(4K);
+    . = 1M;          /* or 0x100000 */
 
    .text : {
     KEEP(*(.text.entry_point))  /* ← preserves the kernel entrypoint */

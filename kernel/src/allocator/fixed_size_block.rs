@@ -46,7 +46,12 @@ impl FixedSizeBlockAllocator {
         // init fallback first
         // This region is never touched by fixed-size lists.
         // Safety: caller guarantees non-overlap.
-        self.fallback_allocator.lock().init(fallback_start, fallback_size);
+        unsafe {
+    self.fallback_allocator
+        .lock()
+        .init(fallback_start as *mut u8, fallback_size);
+}
+
 
         // Now carve the fixed-size region into non-overlapping blocks.
         self.populate_fixed_lists(fixed_start, fixed_size);

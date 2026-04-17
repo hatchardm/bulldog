@@ -35,9 +35,12 @@ static mut KERNEL_STACK: [u8; 100 * 1024] = [0; 100 * 1024];
 
 
 #[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.entry_point")]
 pub extern "C" fn bulldog_entry(boot_info: &'static mut BulldogBootInfo) -> ! {
     kernel_main(boot_info)
 }
+
+
 
 
 fn kernel_main(boot_info: &'static mut BulldogBootInfo) -> ! {

@@ -1,6 +1,0 @@
-# .cargo/config.toml
-[unstable]
-bindeps = true
-
-
-

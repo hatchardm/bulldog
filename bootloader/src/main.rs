@@ -17,9 +17,14 @@ use console::Console;
 use color::Color;
 use uefi::proto::console::text::Input;
 use uefi::boot as uefi_boot;
-use boot::{BootInfo, FramebufferFormat, load_kernel, jump_to_kernel, find_rsdp, acpi_revision};
 use uefi::proto::console::gop::PixelFormat;
+use boot::{load_kernel, jump_to_kernel, find_rsdp, acpi_revision, log_memory_map, fill_memory_regions};
 
+use boot_proto::{
+    BootInfo as BulldogBootInfo,
+    Framebuffer as BulldogFramebuffer,
+    PixelFormat as BulldogPixelFormat,
+};
 
 fn wait_for_keypress() {
     let handle = uefi_boot::get_handle_for_protocol::<Input>()
@@ -37,9 +42,8 @@ fn wait_for_keypress() {
 
 #[entry]
 fn main() -> Status {
-
     uefi::helpers::init().unwrap();
-    info!("Bulldog UEFI bootloader starting…");
+    info!("*** BULLDOG BOOTLOADER START v999 ***");
 
     // Initialize GOP
     let mut ctx = match init_graphics() {
@@ -61,27 +65,21 @@ fn main() -> Status {
     let fb_height = ctx.fb.height;
     let fb_stride = ctx.fb.stride;
 
-    let fb_format = match ctx.mode.pixel_format() {
-        PixelFormat::Rgb => FramebufferFormat::Rgb,
-        PixelFormat::Bgr => FramebufferFormat::Bgr,
-        PixelFormat::Bitmask => FramebufferFormat::Bitmask,
-        _ => FramebufferFormat::Unknown,
-    };
-
     // RSDP (may be 0 if not found)
     let rsdp_addr = find_rsdp().unwrap_or(0);
     info!("RSDP address: {:#x}", rsdp_addr);
 
     if let Some(rev) = acpi_revision(rsdp_addr) {
-    info!("ACPI revision: {}", rev);
-}
-
-
+        info!("ACPI revision: {}", rev);
+    }
 
     // Load font
     let font = load_font();
 
-    // --- Console scope (borrows &mut ctx.fb) ---
+        // --- Console scope (borrows &mut ctx.fb) ---
+    let mut kernel_ptr: *mut u8 = core::ptr::null_mut();
+    let mut kernel_len: usize = 0;
+
     {
         let mut console = Console::new(&mut ctx.fb, font);
         console.set_color(Color::WHITE);
@@ -93,25 +91,65 @@ fn main() -> Status {
         wait_for_keypress();
 
         console.write_str("Loading kernel...\n");
-        let _ = load_kernel(&mut console);
+        match load_kernel(&mut console) {
+            Ok((ptr, len)) => {
+                kernel_ptr = ptr;
+                kernel_len = len;
+            }
+            Err(_) => {
+                console.write_str("Kernel load failed.\n");
+                return Status::LOAD_ERROR;
+            }
+        }
 
         console.write_str("Preparing kernel handover...\n");
     }
     // --- console dropped here ---
 
-    // Build BootInfo from snapshotted values (no borrow of ctx.fb)
-    let boot_info = BootInfo {
-        fb_ptr,
-        fb_width,
-        fb_height,
-        fb_stride,
-        fb_format,
-        rsdp_addr,
+
+
+    // Retrieve and log the UEFI memory map (Step 2: probe only)
+    log_memory_map();
+
+    // Build BulldogBootInfo from snapshotted values (no borrow of ctx.fb)
+    let framebuffer = BulldogFramebuffer {
+        addr: fb_ptr,
+        width: fb_width,
+        height: fb_height,
+        stride: fb_stride,
+        pixel_format: match ctx.mode.pixel_format() {
+            PixelFormat::Rgb => BulldogPixelFormat::Rgb,
+            PixelFormat::Bgr => BulldogPixelFormat::Bgr,
+            PixelFormat::Bitmask => BulldogPixelFormat::Bitmask,
+            _ => BulldogPixelFormat::BltOnly,
+        },
     };
 
-    jump_to_kernel(&boot_info);
-}
+    // For now: placeholder physical_memory_offset + empty memory_regions.
+    // Step 2 will fill memory_regions from the UEFI memory map and set a real offset.
+    let mut boot_info = BulldogBootInfo {
+        framebuffer: Some(framebuffer),
+        physical_memory_offset: 0,
+        memory_regions: &[],
+    };
 
+    // Fill memory_regions from UEFI memory map
+    fill_memory_regions(&mut boot_info);
+    info!("boot_info.memory_regions.len() = {}", boot_info.memory_regions.len());
+
+
+        info!(
+    "calling jump_to_kernel: ptr = {:#x}, len = {}",
+    kernel_ptr as u64,
+    kernel_len
+);
+jump_to_kernel(kernel_ptr, kernel_len, &mut boot_info);
+
+
+
+
+
+}
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
