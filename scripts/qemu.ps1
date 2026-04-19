@@ -1,5 +1,3 @@
-# scripts/qemu.ps1
-
 $Root = Split-Path $PSScriptRoot -Parent
 $Qemu = "C:\Program Files\qemu\qemu-system-x86_64.exe"
 

@@ -18,7 +18,7 @@ use color::Color;
 use uefi::proto::console::text::Input;
 use uefi::boot as uefi_boot;
 use uefi::proto::console::gop::PixelFormat;
-use boot::{load_kernel, jump_to_kernel, find_rsdp, acpi_revision, log_memory_map, fill_memory_regions};
+use boot::{load_kernel, jump_to_kernel, find_rsdp, acpi_revision, fill_memory_regions};
 
 use boot_proto::{
     BootInfo as BulldogBootInfo,
@@ -76,7 +76,7 @@ fn main() -> Status {
     // Load font
     let font = load_font();
 
-        // --- Console scope (borrows &mut ctx.fb) ---
+    // --- Console scope (borrows &mut ctx.fb) ---
     let mut kernel_ptr: *mut u8 = core::ptr::null_mut();
     let mut kernel_len: usize = 0;
 
@@ -106,12 +106,7 @@ fn main() -> Status {
     }
     // --- console dropped here ---
 
-
-
-    // Retrieve and log the UEFI memory map (Step 2: probe only)
-    log_memory_map();
-
-    // Build BulldogBootInfo from snapshotted values (no borrow of ctx.fb)
+    // Build BulldogBootInfo from snapshotted values
     let framebuffer = BulldogFramebuffer {
         addr: fb_ptr,
         width: fb_width,
@@ -125,8 +120,6 @@ fn main() -> Status {
         },
     };
 
-    // For now: placeholder physical_memory_offset + empty memory_regions.
-    // Step 2 will fill memory_regions from the UEFI memory map and set a real offset.
     let mut boot_info = BulldogBootInfo {
         framebuffer: Some(framebuffer),
         physical_memory_offset: 0,
@@ -134,20 +127,20 @@ fn main() -> Status {
     };
 
     // Fill memory_regions from UEFI memory map
-    fill_memory_regions(&mut boot_info);
-    info!("boot_info.memory_regions.len() = {}", boot_info.memory_regions.len());
+    info!("about to call fill_memory_regions");
+fill_memory_regions(&mut boot_info);
+info!("boot_info.memory_regions.len() = {}", boot_info.memory_regions.len());
 
-
-        info!(
+info!(
     "calling jump_to_kernel: ptr = {:#x}, len = {}",
     kernel_ptr as u64,
     kernel_len
 );
+
+
+
+
 jump_to_kernel(kernel_ptr, kernel_len, &mut boot_info);
-
-
-
-
 
 }
 
@@ -155,5 +148,6 @@ jump_to_kernel(kernel_ptr, kernel_len, &mut boot_info);
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
+
 
 

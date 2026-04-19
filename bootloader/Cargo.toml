@@ -1,27 +1,12 @@
-
 [package]
 name = "bulldog-bootloader"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-uefi = {
-    version = "0.37.0",
-    features = ["alloc", "logger", "global_allocator"]
-}
-
+uefi = { version = "0.37.0", features = ["alloc", "logger", "global_allocator"] }
 uefi-raw = "0.14.0"
-
 log = "0.4"
 boot-proto = { path = "../boot-proto" }
 
-[[bin]]
-name = "bulldog-bootloader"
-path = "src/main.rs"
-
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-panic = "abort"
-
+# REMOVE the entire [[bin]] section

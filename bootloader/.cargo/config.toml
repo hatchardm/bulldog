@@ -1,9 +1,10 @@
 [unstable]
-build-std = ["core", "alloc", "compiler_builtins"]
+build-std = ["core", "alloc"]
 
 [target.x86_64-unknown-uefi]
+linker = "rust-lld"
+rustflags = [
+    "-C", "link-args=/subsystem:efi_application /entry:efi_main",
+]
 runner = "uefi-run"
-
-[target.x86_64-unknown-uefi.build-std]
-panic = "abort"
 
