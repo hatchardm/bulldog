@@ -3,7 +3,8 @@ use crate::console::Console;
 use uefi::system;
 use uefi::table::cfg::ConfigTableEntry;
 use uefi::boot::{self, MemoryType};
-use uefi::mem::memory_map::{MemoryMapOwned, MemoryMap};
+use uefi::mem::memory_map::{MemoryMap, MemoryMapOwned};
+
 use log::info;
 use core::slice;
 
@@ -13,13 +14,82 @@ use boot_proto::{
     MemoryRegionKind as BulldogMemoryRegionKind,
 };
 
-// Enough for your current 107 entries with headroom
+// ============================================================
+//  Top‑level ELF definitions (shared by loader + relocations)
+// ============================================================
+
+#[repr(C)]
+struct Elf64Ehdr {
+    e_ident: [u8; 16],
+    e_type: u16,
+    e_machine: u16,
+    e_version: u32,
+    e_entry: u64,
+    e_phoff: u64,
+    e_shoff: u64,
+    e_flags: u32,
+    e_ehsize: u16,
+    e_phentsize: u16,
+    e_phnum: u16,
+    e_shentsize: u16,
+    e_shnum: u16,
+    e_shstrndx: u16,
+}
+
+#[repr(C)]
+struct Elf64Phdr {
+    p_type: u32,
+    p_flags: u32,
+    p_offset: u64,
+    p_vaddr: u64,
+    p_paddr: u64,
+    p_filesz: u64,
+    p_memsz: u64,
+    p_align: u64,
+}
+
+const PT_LOAD: u32 = 1;
+
+// ============================================================
+//  Relocation structures
+// ============================================================
+
+#[repr(C)]
+struct Elf64Shdr {
+    sh_name: u32,
+    sh_type: u32,
+    sh_flags: u64,
+    sh_addr: u64,
+    sh_offset: u64,
+    sh_size: u64,
+    sh_link: u32,
+    sh_info: u32,
+    sh_addralign: u64,
+    sh_entsize: u64,
+}
+
+#[repr(C)]
+struct Elf64Rela {
+    r_offset: u64,
+    r_info: u64,
+    r_addend: i64,
+}
+
+const SHT_RELA: u32 = 4;
+const R_X86_64_RELATIVE: u32 = 8;
+
+// ============================================================
+//  Static memory region buffer
+// ============================================================
+
 static mut MEMORY_REGIONS: [core::mem::MaybeUninit<BulldogMemoryRegion>; 256] =
     [const { core::mem::MaybeUninit::uninit() }; 256];
 
+// ============================================================
+//  Kernel loader
+// ============================================================
+
 pub fn load_kernel(console: &mut Console) -> Result<(*mut u8, usize), ()> {
-    use core::slice;
-    use uefi::boot;
     use uefi::proto::media::file::{
         File, FileMode, FileAttribute, FileType, FileInfo,
     };
@@ -69,6 +139,10 @@ pub fn load_kernel(console: &mut Console) -> Result<(*mut u8, usize), ()> {
     Ok((buf_ptr, file_size))
 }
 
+// ============================================================
+//  Memory map → BootInfo
+// ============================================================
+
 pub fn fill_memory_regions(boot_info: &mut BulldogBootInfo) {
     let memory_map: MemoryMapOwned = boot::memory_map(MemoryType::LOADER_DATA)
         .expect("Failed to retrieve UEFI memory map");
@@ -107,12 +181,56 @@ pub fn fill_memory_regions(boot_info: &mut BulldogBootInfo) {
     boot_info.memory_regions = slice;
 }
 
+// ============================================================
+//  Relocation pass
+// ============================================================
+
+fn apply_relocations(elf: &[u8]) {
+    let ehdr = unsafe { &*(elf.as_ptr() as *const Elf64Ehdr) };
+    let sh_base = unsafe {
+        elf.as_ptr().add(ehdr.e_shoff as usize) as *const Elf64Shdr
+    };
+
+    for i in 0..ehdr.e_shnum {
+        let sh = unsafe { &*sh_base.add(i as usize) };
+        if sh.sh_type != SHT_RELA {
+            continue;
+        }
+
+        let count = (sh.sh_size / sh.sh_entsize) as usize;
+
+        let rela_slice = unsafe {
+            core::slice::from_raw_parts(
+                elf.as_ptr().add(sh.sh_offset as usize) as *const Elf64Rela,
+                count,
+            )
+        };
+
+        for rela in rela_slice {
+            let r_type = (rela.r_info & 0xff) as u32;
+            if r_type != R_X86_64_RELATIVE {
+                continue;
+            }
+
+            let loc = rela.r_offset as *mut u64;
+
+            unsafe {
+                core::ptr::write(loc, rela.r_addend as u64);
+            }
+        }
+    }
+}
+
+// ============================================================
+//  Jump to kernel
+// ============================================================
+
 pub fn jump_to_kernel(
     kernel_ptr: *mut u8,
     kernel_len: usize,
     boot_info: &mut BulldogBootInfo,
 ) -> ! {
-    use core::{mem, ptr, slice};
+    use core::{mem, ptr};
 
     info!(
         "jump_to_kernel entered: ptr = {:#x}, len = {}",
@@ -120,46 +238,13 @@ pub fn jump_to_kernel(
         kernel_len
     );
 
-    // Keep using Boot Services for now; no ExitBootServices yet.
-
     let elf = unsafe { slice::from_raw_parts(kernel_ptr as *const u8, kernel_len) };
-
-    #[repr(C)]
-    struct Elf64Ehdr {
-        e_ident: [u8; 16],
-        e_type: u16,
-        e_machine: u16,
-        e_version: u32,
-        e_entry: u64,
-        e_phoff: u64,
-        e_shoff: u64,
-        e_flags: u32,
-        e_ehsize: u16,
-        e_phentsize: u16,
-        e_phnum: u16,
-        e_shentsize: u16,
-        e_shnum: u16,
-        e_shstrndx: u16,
-    }
-
-    #[repr(C)]
-    struct Elf64Phdr {
-        p_type: u32,
-        p_flags: u32,
-        p_offset: u64,
-        p_vaddr: u64,
-        p_paddr: u64,
-        p_filesz: u64,
-        p_memsz: u64,
-        p_align: u64,
-    }
-
-    const PT_LOAD: u32 = 1;
 
     let ehdr = unsafe { &*(elf.as_ptr() as *const Elf64Ehdr) };
     let ph_base = unsafe { elf.as_ptr().add(ehdr.e_phoff as usize) as *const Elf64Phdr };
 
     let entry_addr = ehdr.e_entry;
+
     info!(
         "ELF header: entry = {:#x}, phoff = {:#x}, phnum = {}",
         entry_addr,
@@ -167,6 +252,7 @@ pub fn jump_to_kernel(
         ehdr.e_phnum
     );
 
+    // Copy PT_LOAD segments
     for i in 0..ehdr.e_phnum {
         let ph = unsafe { &*ph_base.add(i as usize) };
         if ph.p_type != PT_LOAD {
@@ -186,16 +272,24 @@ pub fn jump_to_kernel(
         }
     }
 
+    // Apply relocations
+    apply_relocations(elf);
+
     info!("Jumping to kernel entry = {:#x}", entry_addr);
 
-    let entry: extern "C" fn(&'static mut BulldogBootInfo) -> ! =
-        unsafe { mem::transmute(entry_addr) };
+    type KernelEntry = extern "sysv64" fn(&'static mut BulldogBootInfo) -> !;
+
+    let entry: KernelEntry = unsafe { mem::transmute(entry_addr) };
 
     let boot_info_static: &'static mut BulldogBootInfo =
         unsafe { &mut *(boot_info as *mut BulldogBootInfo) };
 
     entry(boot_info_static)
 }
+
+// ============================================================
+//  ACPI helpers
+// ============================================================
 
 pub fn find_rsdp() -> Option<usize> {
     let mut rsdp = None;

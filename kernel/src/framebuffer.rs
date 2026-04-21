@@ -46,8 +46,11 @@ pub enum PixelFormat {
 }
 
 impl KernelFramebuffer {
+ 
     /// Construct a `KernelFramebuffer` from a `boot-proto` framebuffer.
     pub fn from_bulldog(fb: &mut ProtoFramebuffer) -> Self {
+    
+
         // UEFI GOP always uses 32-bit pixels (4 bytes per pixel)
         let bytes_per_pixel = 4;
 

@@ -30,21 +30,22 @@ use log::{info, error};
 use log::LevelFilter;
 use x86_64::VirtAddr;
 
+
+
 #[unsafe(no_mangle)]
 static mut KERNEL_STACK: [u8; 100 * 1024] = [0; 100 * 1024];
 
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.entry_point")]
-pub extern "C" fn bulldog_entry(boot_info: &'static mut BulldogBootInfo) -> ! {
-
+pub extern "sysv64" fn bulldog_entry(boot_info: &'static mut BulldogBootInfo) -> ! {
     kernel_main(boot_info);
-    loop {}
 }
 
 
 
 fn kernel_main(boot_info: &'static mut BulldogBootInfo) -> ! {
+
     // 🎨 Framebuffer setup
     let framebuffer = boot_info
         .framebuffer
@@ -52,7 +53,13 @@ fn kernel_main(boot_info: &'static mut BulldogBootInfo) -> ! {
         .expect("BootInfo.framebuffer must be present");
 
     let mut fb = KernelFramebuffer::from_bulldog(framebuffer);
+
+
+
     fb.clear_fast(BLACK);
+
+
+    
 
     // ✍️ Initialize WRITER
     writer::framebuffer_init(&mut fb);

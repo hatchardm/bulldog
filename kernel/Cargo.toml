@@ -41,3 +41,8 @@ default = []
 syscall_tests = []
 serial_log = []
 
+[profile.dev]
+opt-level = 0
+debug = true
+lto = false
+codegen-units = 1
