@@ -1,26 +1,45 @@
 $ErrorActionPreference = "Stop"
 
 $root = "C:\Users\hatch\dev\bulldog"
-$bootloader = "$root\bootloader\target\x86_64-unknown-uefi\debug\bulldog-bootloader.efi"
 $img = "$root\fat.img"
 
-# Remove old image
-if (Test-Path $img) { Remove-Item $img }
+Write-Host "[build] Rebuilding bootloader + kernel..."
 
-# Create a 1.44MB file (1474560 bytes)
-$size = 1474560
+# 1. Build bootloader
+cargo +nightly build -p bulldog-bootloader --target x86_64-unknown-uefi
+
+# 2. Build kernel
+cargo +nightly build -p kernel --target x86_64-unknown-none -Z build-std=core,alloc
+
+Write-Host "[build] Build complete."
+
+# 3. Remove old FAT image
+if (Test-Path $img) {
+    Write-Host "[fat] Removing old fat.img"
+    Remove-Item $img
+}
+
+# 4. Create new 64MB image
+Write-Host "[fat] Creating new 64MB FAT image..."
+$size = 64MB
 $fs = [System.IO.File]::Create($img)
 $fs.SetLength($size)
 $fs.Close()
 
-# Format it as FAT12
-mformat -i $img -f 1440 ::
+# 5. Format as FAT32
+Write-Host "[fat] Formatting as FAT32..."
+mformat -i $img -F ::
 
-# Create directories
-mmd -i $img ::/EFI
-mmd -i $img ::/EFI/BOOT
+# 6. Create EFI directories
+Write-Host "[fat] Creating EFI directory structure..."
+mmd -i fat.img ::/EFI
+mmd -i fat.img ::/EFI/BOOT
 
+# 7. Copy bootloader + kernel
+Write-Host "[fat] Copying bootloader + kernel..."
+mcopy -o -i fat.img target\x86_64-unknown-uefi\debug\bulldog-bootloader.efi ::/EFI/BOOT/BOOTX64.EFI
+mcopy -o -i fat.img target\x86_64-unknown-none\debug\kernel ::/EFI/BOOT/kernel.elf
 
-# Copy bootloader
-mcopy -i $img $bootloader ::/EFI/BOOT/BOOTX64.EFI
+Write-Host "[fat] FAT image ready."
+
 

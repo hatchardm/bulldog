@@ -17,5 +17,8 @@ Write-Host "DriveFat:  $DriveFat"
     -drive $DriveCode `
     -drive $DriveVars `
     -drive $DriveFat `
-    -serial stdio
+    -serial file:kernel-serial.log
+
+
+
 

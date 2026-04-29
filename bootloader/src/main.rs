@@ -1,6 +1,8 @@
 #![no_main]
 #![no_std]
 
+extern crate alloc;
+
 use uefi::prelude::*;
 use log::info;
 
@@ -11,20 +13,43 @@ mod color;
 mod text;
 mod boot;
 
+use uefi::boot::{self as uefi_boot, MemoryType};
+use uefi::mem::memory_map::MemoryMapOwned;
+use x86_64::VirtAddr;
+
 use gop::init as init_graphics;
 use text::load_font;
 use console::Console;
 use color::Color;
 use uefi::proto::console::text::Input;
-use uefi::boot as uefi_boot;
 use uefi::proto::console::gop::PixelFormat;
-use boot::{load_kernel, jump_to_kernel, find_rsdp, acpi_revision, fill_memory_regions};
+
+use boot::{
+    load_kernel,
+    jump_to_kernel,
+    find_rsdp,
+    acpi_revision,
+    fill_memory_regions,
+    // init_paging_and_switch_cr3,   // <- not used for this pass
+};
 
 use boot_proto::{
     BootInfo as BulldogBootInfo,
     Framebuffer as BulldogFramebuffer,
     PixelFormat as BulldogPixelFormat,
 };
+
+const PHYS_MEM_OFFSET: u64 = 0xffff800000000000;
+
+// our own post‑paging stack (unused in this pass)
+#[repr(align(16))]
+struct AlignedStack([u8; 64 * 1024]);
+
+static mut BOOT_STACK: AlignedStack = AlignedStack([0; 64 * 1024]);
+
+// kernel image location lives in static storage so it survives any future stack switch
+static mut KERNEL_PTR: *mut u8 = core::ptr::null_mut();
+static mut KERNEL_LEN: usize = 0;
 
 fn wait_for_keypress() {
     let handle = uefi_boot::get_handle_for_protocol::<Input>()
@@ -77,9 +102,6 @@ fn main() -> Status {
     let font = load_font();
 
     // --- Console scope (borrows &mut ctx.fb) ---
-    let mut kernel_ptr: *mut u8 = core::ptr::null_mut();
-    let mut kernel_len: usize = 0;
-
     {
         let mut console = Console::new(&mut ctx.fb, font);
         console.set_color(Color::WHITE);
@@ -93,8 +115,10 @@ fn main() -> Status {
         console.write_str("Loading kernel...\n");
         match load_kernel(&mut console) {
             Ok((ptr, len)) => {
-                kernel_ptr = ptr;
-                kernel_len = len;
+                unsafe {
+                    KERNEL_PTR = ptr;
+                    KERNEL_LEN = len;
+                }
             }
             Err(_) => {
                 console.write_str("Kernel load failed.\n");
@@ -122,32 +146,36 @@ fn main() -> Status {
 
     let mut boot_info = BulldogBootInfo {
         framebuffer: Some(framebuffer),
-        physical_memory_offset: 0,
+        physical_memory_offset: PHYS_MEM_OFFSET,
         memory_regions: &[],
     };
 
     // Fill memory_regions from UEFI memory map
     info!("about to call fill_memory_regions");
-fill_memory_regions(&mut boot_info);
-info!("boot_info.memory_regions.len() = {}", boot_info.memory_regions.len());
+    fill_memory_regions(&mut boot_info);
+    info!("boot_info.memory_regions.len() = {}", boot_info.memory_regions.len());
 
-info!(
-    "calling jump_to_kernel: ptr = {:#x}, len = {}",
-    kernel_ptr as u64,
-    kernel_len
-);
+    // For this pass: DO NOT touch paging/CR3 at all.
+    info!("SKIPPING init_paging_and_switch_cr3 for now");
 
+    let (kernel_ptr, kernel_len) = unsafe { (KERNEL_PTR, KERNEL_LEN) };
 
+    info!(
+        "before jump_to_kernel: kernel_ptr = {:#x}, len = {}",
+        kernel_ptr as u64,
+        kernel_len
+    );
 
+    info!("calling jump_to_kernel now");
 
-jump_to_kernel(kernel_ptr, kernel_len, &mut boot_info);
-
+    jump_to_kernel(kernel_ptr, kernel_len, &mut boot_info);
 }
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
+
 
 
 

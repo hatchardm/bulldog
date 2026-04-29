@@ -14,6 +14,9 @@ use boot_proto::{
     MemoryRegionKind as BulldogMemoryRegionKind,
 };
 
+extern crate alloc;
+use alloc::vec::Vec;
+
 // ============================================================
 //  Top‑level ELF definitions (shared by loader + relocations)
 // ============================================================
@@ -224,13 +227,14 @@ fn apply_relocations(elf: &[u8]) {
 // ============================================================
 //  Jump to kernel
 // ============================================================
-
+#[inline(never)]
 pub fn jump_to_kernel(
     kernel_ptr: *mut u8,
     kernel_len: usize,
     boot_info: &mut BulldogBootInfo,
 ) -> ! {
     use core::{mem, ptr};
+    use core::slice;
 
     info!(
         "jump_to_kernel entered: ptr = {:#x}, len = {}",
@@ -252,28 +256,58 @@ pub fn jump_to_kernel(
         ehdr.e_phnum
     );
 
-    // Copy PT_LOAD segments
     for i in 0..ehdr.e_phnum {
-        let ph = unsafe { &*ph_base.add(i as usize) };
-        if ph.p_type != PT_LOAD {
-            continue;
-        }
+    let ph_ptr = unsafe { ph_base.add(i as usize) };
+    info!(
+        "PHDR {}: ph_ptr = {:#x}",
+        i,
+        ph_ptr as u64
+    );
 
-        let dest = ph.p_vaddr as *mut u8;
-        let src = unsafe { elf.as_ptr().add(ph.p_offset as usize) };
-        let file_sz = ph.p_filesz as usize;
-        let mem_sz = ph.p_memsz as usize;
+    let ph = unsafe { &*ph_ptr };
 
-        unsafe {
-            ptr::copy_nonoverlapping(src, dest, file_sz);
-            if mem_sz > file_sz {
-                ptr::write_bytes(dest.add(file_sz), 0, mem_sz - file_sz);
-            }
-        }
+    if ph.p_type != PT_LOAD {
+        continue;
     }
 
-    // Apply relocations
-    apply_relocations(elf);
+    info!(
+        "PT_LOAD: vaddr = {:#x}, paddr = {:#x}, filesz = {}, memsz = {}",
+        ph.p_vaddr,
+        ph.p_paddr,
+        ph.p_filesz,
+        ph.p_memsz,
+    );
+
+    let dest = ph.p_vaddr as *mut u8;
+    let src = unsafe { elf.as_ptr().add(ph.p_offset as usize) };
+    let file_sz = ph.p_filesz as usize;
+    let mem_sz = ph.p_memsz as usize;
+
+    info!(
+        "PT_LOAD copy: dest = {:#x}, src = {:#x}, file_sz = {}, mem_sz = {}",
+        dest as u64,
+        src as u64,
+        file_sz,
+        mem_sz
+    );
+
+    unsafe {
+        info!("PT_LOAD copy: about to copy_nonoverlapping");
+        ptr::copy_nonoverlapping(src, dest, file_sz);
+        info!("PT_LOAD copy: copy_nonoverlapping done");
+
+        if mem_sz > file_sz {
+            info!(
+                "PT_LOAD zero: dest = {:#x}, count = {}",
+                dest.add(file_sz) as u64,
+                mem_sz - file_sz
+            );
+            ptr::write_bytes(dest.add(file_sz), 0, mem_sz - file_sz);
+            info!("PT_LOAD zero: write_bytes done");
+        }
+    }
+}
+
 
     info!("Jumping to kernel entry = {:#x}", entry_addr);
 
@@ -286,6 +320,9 @@ pub fn jump_to_kernel(
 
     entry(boot_info_static)
 }
+
+
+
 
 // ============================================================
 //  ACPI helpers
@@ -322,6 +359,183 @@ pub fn acpi_revision(rsdp_addr: usize) -> Option<u8> {
     let rsdp = unsafe { &*(rsdp_addr as *const RsdpV1) };
     Some(rsdp.revision)
 }
+
+// ============================================================
+//  Minimal paging bootstrap (Step 1)
+// ============================================================
+
+use x86_64::{
+    PhysAddr, VirtAddr,
+    structures::paging::{
+        PageTable, PageTableFlags, PhysFrame, Size4KiB,
+        OffsetPageTable, FrameAllocator, Mapper,
+    },
+    structures::paging::mapper::MapperAllSizes,
+    registers::control::Cr3,
+};
+
+
+
+/// Tiny frame allocator over the UEFI memory map.
+pub struct BootFrameAllocator {
+    frames: Vec<PhysFrame>,
+    next: usize,
+}
+
+impl BootFrameAllocator {
+    pub fn new(memory_map: &MemoryMapOwned) -> Self {
+        let mut frames = Vec::new();
+
+        for desc in memory_map.entries() {
+            if desc.ty != MemoryType::CONVENTIONAL {
+                continue;
+            }
+
+            let start = desc.phys_start;
+            let end = start + desc.page_count * 4096;
+
+            for addr in (start..end).step_by(4096) {
+                if addr < 0x10000 {
+                    continue;
+                }
+                frames.push(PhysFrame::containing_address(PhysAddr::new(addr)));
+            }
+        }
+
+        BootFrameAllocator { frames, next: 0 }
+    }
+}
+
+unsafe impl FrameAllocator<Size4KiB> for BootFrameAllocator {
+    fn allocate_frame(&mut self) -> Option<PhysFrame> {
+        if self.next >= self.frames.len() {
+            None
+        } else {
+            let frame = self.frames[self.next];
+            self.next += 1;
+            Some(frame)
+        }
+    }
+}
+
+unsafe fn create_empty_pml4(alloc: &mut BootFrameAllocator) -> PhysFrame {
+    let frame = alloc.allocate_frame().expect("No frame for PML4");
+    let ptr = frame.start_address().as_u64() as *mut PageTable;
+    ptr.write(PageTable::new());
+    frame
+}
+
+
+    unsafe fn identity_map_boot_region(
+    mapper: &mut OffsetPageTable<'static>,
+    alloc: &mut BootFrameAllocator,
+    start: u64,
+    end: u64,
+) {
+    use x86_64::structures::paging::{Page, Size4KiB};
+
+    for addr in (start..end).step_by(4096) {
+        let phys = PhysAddr::new(addr);
+        let virt = VirtAddr::new(addr);
+
+        let page: Page<Size4KiB> = Page::containing_address(virt);
+        let frame = PhysFrame::containing_address(phys);
+
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+
+        mapper
+            .map_to(page, frame, flags, alloc)
+            .expect("identity map failed")
+            .flush();
+    }
+}
+
+unsafe fn map_hhdm_region(
+    mapper: &mut OffsetPageTable<'static>,
+    alloc: &mut BootFrameAllocator,
+    phys_offset: VirtAddr,
+    start: u64,
+    end: u64,
+) {
+    use x86_64::structures::paging::{Page, Size4KiB};
+
+    for addr in (start..end).step_by(4096) {
+        let phys = PhysAddr::new(addr);
+        let virt = phys_offset + addr;
+
+        let page: Page<Size4KiB> = Page::containing_address(virt);
+        let frame = PhysFrame::containing_address(phys);
+
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+
+        mapper
+            .map_to(page, frame, flags, alloc)
+            .expect("hhdm map failed")
+            .flush();
+    }
+}
+
+
+use x86_64::instructions::interrupts;
+
+pub unsafe fn init_paging_and_switch_cr3(
+    memory_map: &MemoryMapOwned,
+    phys_offset: VirtAddr,
+    _kernel_ptr: *mut u8,
+    _kernel_len: usize,
+) -> PhysAddr {
+    info!("init_paging_and_switch_cr3: entered");
+
+    // Disable interrupts before we mess with CR3 / mappings
+    interrupts::disable();
+    info!("init_paging_and_switch_cr3: interrupts disabled");
+
+    let mut alloc = BootFrameAllocator::new(memory_map);
+    info!("init_paging_and_switch_cr3: BootFrameAllocator created");
+
+    // 1. Allocate new PML4
+    let pml4_frame = create_empty_pml4(&mut alloc);
+    info!(
+        "init_paging_and_switch_cr3: PML4 frame at {:#x}",
+        pml4_frame.start_address().as_u64()
+    );
+
+    // 2. Build a mapper pointing at the new PML4 using identity mapping
+    let pml4_ptr = pml4_frame.start_address().as_u64() as *mut PageTable;
+    let mut mapper = OffsetPageTable::new(&mut *pml4_ptr, VirtAddr::new(0));
+    info!("init_paging_and_switch_cr3: OffsetPageTable created");
+
+    // 3. Map a big low window (0..2 GiB) both identity and HHDM
+    let start: u64 = 0;
+    let end: u64 = 0x8000_0000; // 2 GiB
+
+    info!(
+        "init_paging_and_switch_cr3: mapping low window {:#x}..{:#x}",
+        start, end
+    );
+
+    identity_map_boot_region(&mut mapper, &mut alloc, start, end);
+    info!("init_paging_and_switch_cr3: identity_map_boot_region done");
+
+    map_hhdm_region(&mut mapper, &mut alloc, phys_offset, start, end);
+    info!("init_paging_and_switch_cr3: map_hhdm_region done");
+
+    // 4. Switch CR3
+    info!("init_paging_and_switch_cr3: about to write CR3");
+
+    let old_rsp: u64;
+core::arch::asm!("mov {}, rsp", out(reg) old_rsp);
+info!("init_paging_and_switch_cr3: old RSP = {:#x}", old_rsp);
+
+    Cr3::write(pml4_frame, Cr3::read().1);
+    info!("init_paging_and_switch_cr3: CR3 written");
+
+    pml4_frame.start_address()
+}
+
+
+
+
 
 
 
