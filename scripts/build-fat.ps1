@@ -1,15 +1,16 @@
 $ErrorActionPreference = "Stop"
 
-$root = "C:\Users\hatch\dev\bulldog"
+$root = "C:\dev\bulldog"
 $img = "$root\fat.img"
 
 Write-Host "[build] Rebuilding bootloader + kernel..."
 
 # 1. Build bootloader
-cargo +nightly build -p bulldog-bootloader --target x86_64-unknown-uefi
+cargo +nightly build -p bulldog-bootloader --release --target x86_64-unknown-uefi
+
 
 # 2. Build kernel
-cargo +nightly build -p kernel --target x86_64-unknown-none -Z build-std=core,alloc
+cargo +nightly build -p kernel --release --target x86_64-unknown-none -Z build-std=core,alloc
 
 Write-Host "[build] Build complete."
 
@@ -37,8 +38,9 @@ mmd -i fat.img ::/EFI/BOOT
 
 # 7. Copy bootloader + kernel
 Write-Host "[fat] Copying bootloader + kernel..."
-mcopy -o -i fat.img target\x86_64-unknown-uefi\debug\bulldog-bootloader.efi ::/EFI/BOOT/BOOTX64.EFI
-mcopy -o -i fat.img target\x86_64-unknown-none\debug\kernel ::/EFI/BOOT/kernel.elf
+mcopy -o -i fat.img target\x86_64-unknown-uefi\release\bulldog-bootloader.efi ::/EFI/BOOT/BOOTX64.EFI
+mcopy -o -i fat.img target\x86_64-unknown-none\release\kernel ::/EFI/BOOT/kernel.elf
+
 
 Write-Host "[fat] FAT image ready."
 

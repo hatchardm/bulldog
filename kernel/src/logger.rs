@@ -4,7 +4,7 @@
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::fmt::Write as FmtWrite;
 use log::{self, Level, LevelFilter, Metadata, Record, set_max_level};
-use crate::writer::WRITER;
+//use crate::writer::WRITER;
 use crate::serial::serial_print;
 
 /// Tracks the current maximum log level filter.
@@ -54,16 +54,17 @@ impl log::Log for CompositeLogger {
 
         // 2) Framebuffer backend (only if WRITER is ready).
         if FB_READY.load(Ordering::Relaxed) {
-            if let Some(w) = WRITER.lock().as_mut() {
-                let lvl = match record.level() {
-                    Level::Error => crate::writer::LogLevel::Error,
-                    Level::Warn  => crate::writer::LogLevel::Warn,
-                    Level::Info  => crate::writer::LogLevel::Info,
-                    Level::Debug => crate::writer::LogLevel::Debug,
-                    Level::Trace => crate::writer::LogLevel::Trace,
-                };
-                w.log(lvl, format_args!("{}", record.args()));
-            }
+//           if let Some(w) = WRITER.lock().as_mut() {
+
+//                let lvl = match record.level() {
+//                    Level::Error => crate::writer::LogLevel::Error,
+//                    Level::Warn  => crate::writer::LogLevel::Warn,
+//                    Level::Info  => crate::writer::LogLevel::Info,
+//                    Level::Debug => crate::writer::LogLevel::Debug,
+//                    Level::Trace => crate::writer::LogLevel::Trace,
+//                };
+//                w.log(lvl, format_args!("{}", record.args()));
+//            }
         }
     }
 

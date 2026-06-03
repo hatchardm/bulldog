@@ -13,8 +13,7 @@ mod color;
 mod text;
 mod boot;
 
-use uefi::boot::{self as uefi_boot, MemoryType};
-use uefi::mem::memory_map::MemoryMapOwned;
+use uefi::boot as uefi_boot;
 use x86_64::VirtAddr;
 
 use gop::init as init_graphics;
@@ -30,7 +29,7 @@ use boot::{
     find_rsdp,
     acpi_revision,
     fill_memory_regions,
-    // init_paging_and_switch_cr3,   // <- not used for this pass
+    init_paging_and_switch_cr3,
 };
 
 use boot_proto::{
@@ -85,10 +84,13 @@ fn main() -> Status {
     );
 
     // Snapshot framebuffer info BEFORE borrowing ctx.fb mutably
-    let fb_ptr = ctx.fb.data.as_mut_ptr();
+    let fb_ptr_virt = ctx.fb.data.as_mut_ptr() as u64;
     let fb_width = ctx.fb.width;
     let fb_height = ctx.fb.height;
     let fb_stride = ctx.fb.stride;
+
+    // Because we identity-map 0..4GiB 1:1, this virtual equals the physical
+    let fb_phys = fb_ptr_virt;
 
     // RSDP (may be 0 if not found)
     let rsdp_addr = find_rsdp().unwrap_or(0);
@@ -130,12 +132,12 @@ fn main() -> Status {
     }
     // --- console dropped here ---
 
-    // Build BulldogBootInfo from snapshotted values
+    // Build BulldogFramebuffer from snapshotted values
     let framebuffer = BulldogFramebuffer {
-        addr: fb_ptr,
-        width: fb_width,
-        height: fb_height,
-        stride: fb_stride,
+        addr: fb_phys,                    // physical address
+        width: fb_width as u32,
+        height: fb_height as u32,
+        stride: fb_stride as u32,         // pixels per row
         pixel_format: match ctx.mode.pixel_format() {
             PixelFormat::Rgb => BulldogPixelFormat::Rgb,
             PixelFormat::Bgr => BulldogPixelFormat::Bgr,
@@ -144,19 +146,47 @@ fn main() -> Status {
         },
     };
 
+   
+
+
+
+    // Initial BootInfo; fill_memory_regions will overwrite memory_regions/count
     let mut boot_info = BulldogBootInfo {
-        framebuffer: Some(framebuffer),
+        framebuffer,
+        framebuffer_present: 1,
+        _pad0: [0; 7],
         physical_memory_offset: PHYS_MEM_OFFSET,
-        memory_regions: &[],
+        memory_regions: core::ptr::null(),
+        memory_region_count: 0,
     };
 
     // Fill memory_regions from UEFI memory map
     info!("about to call fill_memory_regions");
-    fill_memory_regions(&mut boot_info);
-    info!("boot_info.memory_regions.len() = {}", boot_info.memory_regions.len());
+    let memory_map_owned = fill_memory_regions(&mut boot_info);
+    info!(
+        "boot_info.memory_region_count = {}",
+        boot_info.memory_region_count
+    );
 
-    // For this pass: DO NOT touch paging/CR3 at all.
-    info!("SKIPPING init_paging_and_switch_cr3 for now");
+    // Set up paging and switch CR3
+    info!("about to call init_paging_and_switch_cr3");
+
+    let phys_offset = VirtAddr::new(PHYS_MEM_OFFSET);
+    let (kernel_ptr, kernel_len) = unsafe { (KERNEL_PTR, KERNEL_LEN) };
+
+    let pml4_phys = unsafe {
+        init_paging_and_switch_cr3(
+            &memory_map_owned,
+            phys_offset,
+            kernel_ptr,
+            kernel_len,
+        )
+    };
+
+    info!(
+        "init_paging_and_switch_cr3 done: new PML4 at {:#x}",
+        pml4_phys.as_u64()
+    );
 
     let (kernel_ptr, kernel_len) = unsafe { (KERNEL_PTR, KERNEL_LEN) };
 
@@ -175,6 +205,7 @@ fn main() -> Status {
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
+
 
 
 

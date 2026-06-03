@@ -3,7 +3,7 @@ use crate::console::Console;
 use uefi::system;
 use uefi::table::cfg::ConfigTableEntry;
 use uefi::boot::{self, MemoryType};
-use uefi::mem::memory_map::{MemoryMap, MemoryMapOwned};
+use uefi::mem::memory_map::MemoryMapOwned;
 
 use log::info;
 use core::slice;
@@ -14,11 +14,19 @@ use boot_proto::{
     MemoryRegionKind as BulldogMemoryRegionKind,
 };
 
-extern crate alloc;
+use uefi::mem::memory_map::MemoryMap;          // ← enables memory_map.entries()
+use x86_64::structures::paging::Mapper;        // ← enables mapper.map_to()
+use x86_64::structures::paging::mapper::MapperAllSizes;
+
 use alloc::vec::Vec;
 
+extern crate alloc;
+
+#[unsafe(no_mangle)]
+static mut KERNEL_STACK: [u8; 100 * 1024] = [0; 100 * 1024];
+
 // ============================================================
-//  Top‑level ELF definitions (shared by loader + relocations)
+//  Top‑level ELF definitions
 // ============================================================
 
 #[repr(C)]
@@ -146,7 +154,7 @@ pub fn load_kernel(console: &mut Console) -> Result<(*mut u8, usize), ()> {
 //  Memory map → BootInfo
 // ============================================================
 
-pub fn fill_memory_regions(boot_info: &mut BulldogBootInfo) {
+pub fn fill_memory_regions(boot_info: &mut BulldogBootInfo) -> MemoryMapOwned {
     let memory_map: MemoryMapOwned = boot::memory_map(MemoryType::LOADER_DATA)
         .expect("Failed to retrieve UEFI memory map");
 
@@ -178,11 +186,19 @@ pub fn fill_memory_regions(boot_info: &mut BulldogBootInfo) {
 
     let slice = unsafe {
         let ptr = MEMORY_REGIONS.as_ptr() as *const BulldogMemoryRegion;
-        slice::from_raw_parts(ptr, idx)
+        core::slice::from_raw_parts(ptr, idx)
     };
 
-    boot_info.memory_regions = slice;
+    // 🔴 OLD:
+    // boot_info.memory_regions = slice;
+
+    // ✅ NEW:
+    boot_info.memory_regions = slice.as_ptr();
+    boot_info.memory_region_count = idx;
+
+    memory_map
 }
+
 
 // ============================================================
 //  Relocation pass
@@ -227,6 +243,7 @@ fn apply_relocations(elf: &[u8]) {
 // ============================================================
 //  Jump to kernel
 // ============================================================
+
 #[inline(never)]
 pub fn jump_to_kernel(
     kernel_ptr: *mut u8,
@@ -257,57 +274,56 @@ pub fn jump_to_kernel(
     );
 
     for i in 0..ehdr.e_phnum {
-    let ph_ptr = unsafe { ph_base.add(i as usize) };
-    info!(
-        "PHDR {}: ph_ptr = {:#x}",
-        i,
-        ph_ptr as u64
-    );
+        let ph_ptr = unsafe { ph_base.add(i as usize) };
+        info!(
+            "PHDR {}: ph_ptr = {:#x}",
+            i,
+            ph_ptr as u64
+        );
 
-    let ph = unsafe { &*ph_ptr };
+        let ph = unsafe { &*ph_ptr };
 
-    if ph.p_type != PT_LOAD {
-        continue;
-    }
+        if ph.p_type != PT_LOAD {
+            continue;
+        }
 
-    info!(
-        "PT_LOAD: vaddr = {:#x}, paddr = {:#x}, filesz = {}, memsz = {}",
-        ph.p_vaddr,
-        ph.p_paddr,
-        ph.p_filesz,
-        ph.p_memsz,
-    );
+        info!(
+            "PT_LOAD: vaddr = {:#x}, paddr = {:#x}, filesz = {}, memsz = {}",
+            ph.p_vaddr,
+            ph.p_paddr,
+            ph.p_filesz,
+            ph.p_memsz,
+        );
 
-    let dest = ph.p_vaddr as *mut u8;
-    let src = unsafe { elf.as_ptr().add(ph.p_offset as usize) };
-    let file_sz = ph.p_filesz as usize;
-    let mem_sz = ph.p_memsz as usize;
+        let dest = ph.p_vaddr as *mut u8;
+        let src = unsafe { elf.as_ptr().add(ph.p_offset as usize) };
+        let file_sz = ph.p_filesz as usize;
+        let mem_sz = ph.p_memsz as usize;
 
-    info!(
-        "PT_LOAD copy: dest = {:#x}, src = {:#x}, file_sz = {}, mem_sz = {}",
-        dest as u64,
-        src as u64,
-        file_sz,
-        mem_sz
-    );
+        info!(
+            "PT_LOAD copy: dest = {:#x}, src = {:#x}, file_sz = {}, mem_sz = {}",
+            dest as u64,
+            src as u64,
+            file_sz,
+            mem_sz
+        );
 
-    unsafe {
-        info!("PT_LOAD copy: about to copy_nonoverlapping");
-        ptr::copy_nonoverlapping(src, dest, file_sz);
-        info!("PT_LOAD copy: copy_nonoverlapping done");
+        unsafe {
+            info!("PT_LOAD copy: about to copy_nonoverlapping");
+            ptr::copy_nonoverlapping(src, dest, file_sz);
+            info!("PT_LOAD copy: copy_nonoverlapping done");
 
-        if mem_sz > file_sz {
-            info!(
-                "PT_LOAD zero: dest = {:#x}, count = {}",
-                dest.add(file_sz) as u64,
-                mem_sz - file_sz
-            );
-            ptr::write_bytes(dest.add(file_sz), 0, mem_sz - file_sz);
-            info!("PT_LOAD zero: write_bytes done");
+            if mem_sz > file_sz {
+                info!(
+                    "PT_LOAD zero: dest = {:#x}, count = {}",
+                    dest.add(file_sz) as u64,
+                    mem_sz - file_sz
+                );
+                ptr::write_bytes(dest.add(file_sz), 0, mem_sz - file_sz);
+                info!("PT_LOAD zero: write_bytes done");
+            }
         }
     }
-}
-
 
     info!("Jumping to kernel entry = {:#x}", entry_addr);
 
@@ -318,11 +334,26 @@ pub fn jump_to_kernel(
     let boot_info_static: &'static mut BulldogBootInfo =
         unsafe { &mut *(boot_info as *mut BulldogBootInfo) };
 
-    entry(boot_info_static)
+    unsafe {
+        let stack_base = (&raw mut KERNEL_STACK as *mut u8) as u64;
+        let stack_top = (&raw mut KERNEL_STACK as *mut u8).add(100 * 1024) as u64;
+
+        info!("jump_to_kernel: KERNEL_STACK base = {:#x}", stack_base);
+        info!("jump_to_kernel: KERNEL_STACK end  = {:#x}", stack_top);
+
+        core::arch::asm!(
+    "mov rsp, {stack}",
+    "and rsp, -16",     // align to 16 bytes
+    "sub rsp, 8",       // SysV ABI requires (rsp % 16 == 8) at call
+    "call {entry}",
+    stack = in(reg) stack_top,
+    entry = in(reg) entry,
+    in("rdi") boot_info_static,
+    options(noreturn)
+);
+
+    }
 }
-
-
-
 
 // ============================================================
 //  ACPI helpers
@@ -361,22 +392,18 @@ pub fn acpi_revision(rsdp_addr: usize) -> Option<u8> {
 }
 
 // ============================================================
-//  Minimal paging bootstrap (Step 1)
+//  Minimal paging bootstrap
 // ============================================================
 
 use x86_64::{
     PhysAddr, VirtAddr,
     structures::paging::{
         PageTable, PageTableFlags, PhysFrame, Size4KiB,
-        OffsetPageTable, FrameAllocator, Mapper,
+        OffsetPageTable, FrameAllocator,
     },
-    structures::paging::mapper::MapperAllSizes,
     registers::control::Cr3,
 };
 
-
-
-/// Tiny frame allocator over the UEFI memory map.
 pub struct BootFrameAllocator {
     frames: Vec<PhysFrame>,
     next: usize,
@@ -387,6 +414,7 @@ impl BootFrameAllocator {
         let mut frames = Vec::new();
 
         for desc in memory_map.entries() {
+            // Only take truly free RAM for page tables
             if desc.ty != MemoryType::CONVENTIONAL {
                 continue;
             }
@@ -405,6 +433,7 @@ impl BootFrameAllocator {
         BootFrameAllocator { frames, next: 0 }
     }
 }
+
 
 unsafe impl FrameAllocator<Size4KiB> for BootFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
@@ -425,8 +454,7 @@ unsafe fn create_empty_pml4(alloc: &mut BootFrameAllocator) -> PhysFrame {
     frame
 }
 
-
-    unsafe fn identity_map_boot_region(
+unsafe fn identity_map_boot_region(
     mapper: &mut OffsetPageTable<'static>,
     alloc: &mut BootFrameAllocator,
     start: u64,
@@ -475,7 +503,6 @@ unsafe fn map_hhdm_region(
     }
 }
 
-
 use x86_64::instructions::interrupts;
 
 pub unsafe fn init_paging_and_switch_cr3(
@@ -486,28 +513,24 @@ pub unsafe fn init_paging_and_switch_cr3(
 ) -> PhysAddr {
     info!("init_paging_and_switch_cr3: entered");
 
-    // Disable interrupts before we mess with CR3 / mappings
     interrupts::disable();
     info!("init_paging_and_switch_cr3: interrupts disabled");
 
     let mut alloc = BootFrameAllocator::new(memory_map);
     info!("init_paging_and_switch_cr3: BootFrameAllocator created");
 
-    // 1. Allocate new PML4
     let pml4_frame = create_empty_pml4(&mut alloc);
     info!(
         "init_paging_and_switch_cr3: PML4 frame at {:#x}",
         pml4_frame.start_address().as_u64()
     );
 
-    // 2. Build a mapper pointing at the new PML4 using identity mapping
     let pml4_ptr = pml4_frame.start_address().as_u64() as *mut PageTable;
     let mut mapper = OffsetPageTable::new(&mut *pml4_ptr, VirtAddr::new(0));
     info!("init_paging_and_switch_cr3: OffsetPageTable created");
 
-    // 3. Map a big low window (0..2 GiB) both identity and HHDM
     let start: u64 = 0;
-    let end: u64 = 0x8000_0000; // 2 GiB
+    let end: u64 = 0x1_0000_0000; // 4 GiB
 
     info!(
         "init_paging_and_switch_cr3: mapping low window {:#x}..{:#x}",
@@ -520,12 +543,13 @@ pub unsafe fn init_paging_and_switch_cr3(
     map_hhdm_region(&mut mapper, &mut alloc, phys_offset, start, end);
     info!("init_paging_and_switch_cr3: map_hhdm_region done");
 
-    // 4. Switch CR3
+    
+
     info!("init_paging_and_switch_cr3: about to write CR3");
 
     let old_rsp: u64;
-core::arch::asm!("mov {}, rsp", out(reg) old_rsp);
-info!("init_paging_and_switch_cr3: old RSP = {:#x}", old_rsp);
+    core::arch::asm!("mov {}, rsp", out(reg) old_rsp);
+    info!("init_paging_and_switch_cr3: old RSP = {:#x}", old_rsp);
 
     Cr3::write(pml4_frame, Cr3::read().1);
     info!("init_paging_and_switch_cr3: CR3 written");

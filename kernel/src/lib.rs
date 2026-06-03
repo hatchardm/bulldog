@@ -32,7 +32,7 @@ use x86_64::{
 
 #[macro_use]
 pub mod macros;
-pub mod writer;
+//pub mod writer;
 pub mod framebuffer;
 pub mod interrupts;
 pub mod gdt;
@@ -43,12 +43,15 @@ pub mod apic;
 pub mod time;
 pub mod font;
 pub mod color;
-pub mod logger;
+//pub mod logger;
 pub mod syscall;
 pub mod serial;
 pub mod vfs;
 pub mod elf;
 pub mod user_mode;
+pub mod text;
+pub mod console;
+
 
 #[cfg(feature = "syscall_tests")]
 mod tests;
@@ -61,6 +64,8 @@ use crate::memory::{
 };
 use crate::syscall::fd::init_fd_table_with_std;
 use crate::vfs::init::vfs_init;
+
+
 
 /// Kernel initialization routine.
 ///
