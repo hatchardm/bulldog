@@ -4,6 +4,10 @@
 extern crate alloc;
 
 use uefi::prelude::*;
+use uefi::boot as uefi_boot;
+use uefi::proto::console::text::Input;
+use uefi::proto::console::gop::PixelFormat;
+
 use log::info;
 
 mod gop;
@@ -13,22 +17,17 @@ mod color;
 mod text;
 mod boot;
 
-use uefi::boot as uefi_boot;
-use x86_64::VirtAddr;
-
 use gop::init as init_graphics;
 use text::load_font;
 use console::Console;
 use color::Color;
-use uefi::proto::console::text::Input;
-use uefi::proto::console::gop::PixelFormat;
 
 use boot::{
     load_kernel,
     jump_to_kernel,
     find_rsdp,
     acpi_revision,
-    fill_memory_regions,
+    fill_memory_regions_from_map,
     init_paging_and_switch_cr3,
 };
 
@@ -40,13 +39,11 @@ use boot_proto::{
 
 const PHYS_MEM_OFFSET: u64 = 0xffff800000000000;
 
-// our own post‑paging stack (unused in this pass)
 #[repr(align(16))]
 struct AlignedStack([u8; 64 * 1024]);
 
 static mut BOOT_STACK: AlignedStack = AlignedStack([0; 64 * 1024]);
 
-// kernel image location lives in static storage so it survives any future stack switch
 static mut KERNEL_PTR: *mut u8 = core::ptr::null_mut();
 static mut KERNEL_LEN: usize = 0;
 
@@ -69,7 +66,9 @@ fn main() -> Status {
     uefi::helpers::init().unwrap();
     info!("*** BULLDOG BOOTLOADER START v999 ***");
 
+    // -------------------------------
     // Initialize GOP
+    // -------------------------------
     let mut ctx = match init_graphics() {
         Ok(c) => c,
         Err(e) => {
@@ -83,16 +82,15 @@ fn main() -> Status {
         ctx.fb.width, ctx.fb.height, ctx.fb.stride
     );
 
-    // Snapshot framebuffer info BEFORE borrowing ctx.fb mutably
-    let fb_ptr_virt = ctx.fb.data.as_mut_ptr() as u64;
+    // Snapshot framebuffer BEFORE mutable borrow
+    let fb_addr_phys = ctx.fb.data.as_mut_ptr() as u64;
     let fb_width = ctx.fb.width;
     let fb_height = ctx.fb.height;
     let fb_stride = ctx.fb.stride;
 
-    // Because we identity-map 0..4GiB 1:1, this virtual equals the physical
-    let fb_phys = fb_ptr_virt;
-
-    // RSDP (may be 0 if not found)
+    // -------------------------------
+    // ACPI
+    // -------------------------------
     let rsdp_addr = find_rsdp().unwrap_or(0);
     info!("RSDP address: {:#x}", rsdp_addr);
 
@@ -100,12 +98,18 @@ fn main() -> Status {
         info!("ACPI revision: {}", rev);
     }
 
-    // Load font
+    // -------------------------------
+    // Console + Kernel Load
+    // -------------------------------
+    info!("about to load_font");
     let font = load_font();
+    info!("load_font returned");
 
-    // --- Console scope (borrows &mut ctx.fb) ---
+    info!("about to create Console");
     {
         let mut console = Console::new(&mut ctx.fb, font);
+        info!("Console::new returned");
+
         console.set_color(Color::WHITE);
 
         console.write_str("Bulldog Bootloader\n");
@@ -116,12 +120,10 @@ fn main() -> Status {
 
         console.write_str("Loading kernel...\n");
         match load_kernel(&mut console) {
-            Ok((ptr, len)) => {
-                unsafe {
-                    KERNEL_PTR = ptr;
-                    KERNEL_LEN = len;
-                }
-            }
+            Ok((ptr, len)) => unsafe {
+                KERNEL_PTR = ptr;
+                KERNEL_LEN = len;
+            },
             Err(_) => {
                 console.write_str("Kernel load failed.\n");
                 return Status::LOAD_ERROR;
@@ -130,14 +132,15 @@ fn main() -> Status {
 
         console.write_str("Preparing kernel handover...\n");
     }
-    // --- console dropped here ---
 
-    // Build BulldogFramebuffer from snapshotted values
+    // -------------------------------
+    // Build BootInfo
+    // -------------------------------
     let framebuffer = BulldogFramebuffer {
-        addr: fb_phys,                    // physical address
+        addr: fb_addr_phys,
         width: fb_width as u32,
         height: fb_height as u32,
-        stride: fb_stride as u32,         // pixels per row
+        stride: fb_stride as u32,
         pixel_format: match ctx.mode.pixel_format() {
             PixelFormat::Rgb => BulldogPixelFormat::Rgb,
             PixelFormat::Bgr => BulldogPixelFormat::Bgr,
@@ -146,11 +149,6 @@ fn main() -> Status {
         },
     };
 
-   
-
-
-
-    // Initial BootInfo; fill_memory_regions will overwrite memory_regions/count
     let mut boot_info = BulldogBootInfo {
         framebuffer,
         framebuffer_present: 1,
@@ -160,51 +158,62 @@ fn main() -> Status {
         memory_region_count: 0,
     };
 
-    // Fill memory_regions from UEFI memory map
-    info!("about to call fill_memory_regions");
-    let memory_map_owned = fill_memory_regions(&mut boot_info);
-    info!(
-        "boot_info.memory_region_count = {}",
-        boot_info.memory_region_count
-    );
+    info!("Framebuffer phys addr: {:#x}", fb_addr_phys);
 
-    // Set up paging and switch CR3
-    info!("about to call init_paging_and_switch_cr3");
+    // -------------------------------
+    // Exit Boot Services
+    // -------------------------------
+    info!("about to call ExitBootServices");
+    let memory_map_owned = unsafe { uefi_boot::exit_boot_services(None) };
+    info!("ExitBootServices returned");
 
-    let phys_offset = VirtAddr::new(PHYS_MEM_OFFSET);
-    let (kernel_ptr, kernel_len) = unsafe { (KERNEL_PTR, KERNEL_LEN) };
+    // -------------------------------
+    // Paging + BootInfo memory map
+    // -------------------------------
+    // 1) Set up HHDM mappings in the existing PML4 (no CR3 change)
 
-    let pml4_phys = unsafe {
-        init_paging_and_switch_cr3(
+/* 
+    unsafe {
+        boot::init_paging_and_switch_cr3(
             &memory_map_owned,
-            phys_offset,
-            kernel_ptr,
-            kernel_len,
-        )
-    };
+            x86_64::VirtAddr::new(PHYS_MEM_OFFSET),
+            unsafe { KERNEL_PTR },
+            unsafe { KERNEL_LEN },
+        );
+    }
+*/
+    // 2) Fill BootInfo.memory_regions from the UEFI memory map
+    fill_memory_regions_from_map(&mut boot_info, &memory_map_owned);
 
-    info!(
-        "init_paging_and_switch_cr3 done: new PML4 at {:#x}",
-        pml4_phys.as_u64()
-    );
+    // -------------------------------
+    // TEMP: prove we’re alive after paging setup
+    // -------------------------------
+    let fb_ptr = fb_addr_phys as *mut u32;
+    let fb_len = (fb_stride as usize) * (fb_height as usize);
 
-    let (kernel_ptr, kernel_len) = unsafe { (KERNEL_PTR, KERNEL_LEN) };
+    unsafe {
+        let fb = core::slice::from_raw_parts_mut(fb_ptr, fb_len);
+        for pixel in fb.iter_mut() {
+            *pixel = 0x00000000; // black
+        }
+        for pixel in fb.iter_mut() {
+            *pixel = 0x0000FF00; // green (BGR)
+        }
+    }
 
-    info!(
-        "before jump_to_kernel: kernel_ptr = {:#x}, len = {}",
-        kernel_ptr as u64,
-        kernel_len
-    );
-
-    info!("calling jump_to_kernel now");
-
-    jump_to_kernel(kernel_ptr, kernel_len, &mut boot_info);
+    // -------------------------------
+    // Jump to kernel
+    // -------------------------------
+    unsafe {
+        jump_to_kernel(KERNEL_PTR, KERNEL_LEN, &mut boot_info);
+    }
 }
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
+
 
 
 

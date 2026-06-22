@@ -45,10 +45,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bulldog-syscall"
-version = "0.1.0"
-
-[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -177,6 +173,15 @@ dependencies = [
  "rlibc",
  "spin",
  "volatile",
+ "x86_64 0.14.13",
+]
+
+[[package]]
+name = "kernel-bin"
+version = "0.1.0"
+dependencies = [
+ "boot-proto",
+ "kernel",
  "x86_64 0.14.13",
 ]
 

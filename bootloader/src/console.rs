@@ -101,9 +101,10 @@ impl<'a> Console<'a> {
     }
 
     pub fn write_str(&mut self, s: &str) {
-        for ch in s.chars() {
-            self.put_char_at_cursor(ch);
-        }
+    for ch in s.chars() {
+        self.put_char_at_cursor(ch);
     }
+}
+
 }
 

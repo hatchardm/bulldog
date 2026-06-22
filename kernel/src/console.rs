@@ -1,8 +1,9 @@
+// console.rs
 use crate::framebuffer::KernelFramebuffer;
-use crate::text::draw_char_8x8;
+use crate::serial::serial_print;
 
 pub struct Console {
-    fb: *mut KernelFramebuffer,
+    fb: KernelFramebuffer,
     cursor_x: usize,
     cursor_y: usize,
     fg: u32,
@@ -10,36 +11,30 @@ pub struct Console {
 }
 
 impl Console {
-    pub fn new(fb: &mut KernelFramebuffer) -> Self {
+    pub fn new(fb: KernelFramebuffer) -> Self {
         Console {
-            fb: fb as *mut KernelFramebuffer,
+            fb,
             cursor_x: 0,
             cursor_y: 0,
-            fg: 0x00FFFFFF,
-            bg: 0x00000000,
+            fg: 0x00FF_FFFF,
+            bg: 0x0000_0000,
         }
     }
 
-     pub fn write_str(&mut self, _s: &str) {
-    let fb: &mut KernelFramebuffer = unsafe { &mut *self.fb };
-
-    fb.draw_pixel(0, 0, self.fg);
-}
-
-}
-
-
-
-
-    
-/* 
     pub fn write_str(&mut self, s: &str) {
-        let fb = unsafe { &mut *self.fb };
 
-        draw_char_8x8(fb, 0, 0, 'X', self.fg, self.bg);
+        for b in s.bytes() {
+            match b {
+                b'\n' => {
+                    // TODO: implement newline handling
+                }
+                _ => {
+                    // TODO: draw a glyph for this ASCII byte using self.fb
+                }
+            }
+        }
     }
-    
 }
-*/
+
 
 

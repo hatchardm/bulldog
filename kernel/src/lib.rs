@@ -32,7 +32,7 @@ use x86_64::{
 
 #[macro_use]
 pub mod macros;
-//pub mod writer;
+pub mod writer;
 pub mod framebuffer;
 pub mod interrupts;
 pub mod gdt;
@@ -51,7 +51,7 @@ pub mod elf;
 pub mod user_mode;
 pub mod text;
 pub mod console;
-
+pub mod font8x16;
 
 #[cfg(feature = "syscall_tests")]
 mod tests;

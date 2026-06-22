@@ -1,0 +1,9 @@
+[package]
+name = "kernel-bin"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+kernel = { path = "../kernel" }
+boot-proto = { path = "../boot-proto" }
+x86_64 = "0.14"

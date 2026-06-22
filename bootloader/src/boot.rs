@@ -3,8 +3,7 @@ use crate::console::Console;
 use uefi::system;
 use uefi::table::cfg::ConfigTableEntry;
 use uefi::boot::{self, MemoryType};
-use uefi::mem::memory_map::MemoryMapOwned;
-
+use uefi::mem::memory_map::{MemoryMap, MemoryMapOwned};
 use log::info;
 use core::slice;
 
@@ -14,16 +13,28 @@ use boot_proto::{
     MemoryRegionKind as BulldogMemoryRegionKind,
 };
 
-use uefi::mem::memory_map::MemoryMap;          // ← enables memory_map.entries()
-use x86_64::structures::paging::Mapper;        // ← enables mapper.map_to()
-use x86_64::structures::paging::mapper::MapperAllSizes;
+use x86_64::structures::paging::Mapper;
 
 use alloc::vec::Vec;
 
+use x86_64::{
+    PhysAddr, VirtAddr,
+    structures::paging::{
+        PageTable, PageTableFlags, PhysFrame, Size4KiB,
+        OffsetPageTable, FrameAllocator,
+    },
+    registers::control::Cr3,
+};
+
+
 extern crate alloc;
 
+
+#[repr(align(16))]
+struct AlignedKernelStack([u8; 100 * 1024]);
+
 #[unsafe(no_mangle)]
-static mut KERNEL_STACK: [u8; 100 * 1024] = [0; 100 * 1024];
+static mut KERNEL_STACK: AlignedKernelStack = AlignedKernelStack([0; 100 * 1024]);
 
 // ============================================================
 //  Top‑level ELF definitions
@@ -151,13 +162,16 @@ pub fn load_kernel(console: &mut Console) -> Result<(*mut u8, usize), ()> {
 }
 
 // ============================================================
-//  Memory map → BootInfo
+//  Memory map helpers (for BootInfo)
 // ============================================================
 
-pub fn fill_memory_regions(boot_info: &mut BulldogBootInfo) -> MemoryMapOwned {
-    let memory_map: MemoryMapOwned = boot::memory_map(MemoryType::LOADER_DATA)
-        .expect("Failed to retrieve UEFI memory map");
 
+
+/// Fill BootInfo.memory_regions / memory_region_count from an existing MemoryMapOwned.
+pub fn fill_memory_regions_from_map(
+    boot_info: &mut BulldogBootInfo,
+    memory_map: &MemoryMapOwned,
+) {
     let mut idx = 0usize;
 
     for desc in memory_map.entries() {
@@ -189,16 +203,9 @@ pub fn fill_memory_regions(boot_info: &mut BulldogBootInfo) -> MemoryMapOwned {
         core::slice::from_raw_parts(ptr, idx)
     };
 
-    // 🔴 OLD:
-    // boot_info.memory_regions = slice;
-
-    // ✅ NEW:
     boot_info.memory_regions = slice.as_ptr();
     boot_info.memory_region_count = idx;
-
-    memory_map
 }
-
 
 // ============================================================
 //  Relocation pass
@@ -275,11 +282,7 @@ pub fn jump_to_kernel(
 
     for i in 0..ehdr.e_phnum {
         let ph_ptr = unsafe { ph_base.add(i as usize) };
-        info!(
-            "PHDR {}: ph_ptr = {:#x}",
-            i,
-            ph_ptr as u64
-        );
+        info!("PHDR {}: ph_ptr = {:#x}", i, ph_ptr as u64);
 
         let ph = unsafe { &*ph_ptr };
 
@@ -335,23 +338,22 @@ pub fn jump_to_kernel(
         unsafe { &mut *(boot_info as *mut BulldogBootInfo) };
 
     unsafe {
-        let stack_base = (&raw mut KERNEL_STACK as *mut u8) as u64;
-        let stack_top = (&raw mut KERNEL_STACK as *mut u8).add(100 * 1024) as u64;
+        let stack_base = (&raw mut KERNEL_STACK.0 as *mut u8) as u64;
+        let stack_top  = (&raw mut KERNEL_STACK.0 as *mut u8).add(100 * 1024) as u64;
 
         info!("jump_to_kernel: KERNEL_STACK base = {:#x}", stack_base);
         info!("jump_to_kernel: KERNEL_STACK end  = {:#x}", stack_top);
 
         core::arch::asm!(
-    "mov rsp, {stack}",
-    "and rsp, -16",     // align to 16 bytes
-    "sub rsp, 8",       // SysV ABI requires (rsp % 16 == 8) at call
-    "call {entry}",
-    stack = in(reg) stack_top,
-    entry = in(reg) entry,
-    in("rdi") boot_info_static,
-    options(noreturn)
-);
-
+            "mov rsp, {stack}",
+            "and rsp, -16",
+            "sub rsp, 8",
+            "call {entry}",
+            stack = in(reg) stack_top,
+            entry = in(reg) entry,
+            in("rdi") boot_info_static,
+            options(noreturn)
+        );
     }
 }
 
@@ -395,14 +397,7 @@ pub fn acpi_revision(rsdp_addr: usize) -> Option<u8> {
 //  Minimal paging bootstrap
 // ============================================================
 
-use x86_64::{
-    PhysAddr, VirtAddr,
-    structures::paging::{
-        PageTable, PageTableFlags, PhysFrame, Size4KiB,
-        OffsetPageTable, FrameAllocator,
-    },
-    registers::control::Cr3,
-};
+
 
 pub struct BootFrameAllocator {
     frames: Vec<PhysFrame>,
@@ -414,7 +409,6 @@ impl BootFrameAllocator {
         let mut frames = Vec::new();
 
         for desc in memory_map.entries() {
-            // Only take truly free RAM for page tables
             if desc.ty != MemoryType::CONVENTIONAL {
                 continue;
             }
@@ -433,7 +427,6 @@ impl BootFrameAllocator {
         BootFrameAllocator { frames, next: 0 }
     }
 }
-
 
 unsafe impl FrameAllocator<Size4KiB> for BootFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
@@ -511,7 +504,9 @@ pub unsafe fn init_paging_and_switch_cr3(
     _kernel_ptr: *mut u8,
     _kernel_len: usize,
 ) -> PhysAddr {
-    info!("init_paging_and_switch_cr3: entered");
+    use x86_64::registers::control::Cr3;
+
+    info!("init_paging_and_switch_cr3: entered (HHDM-only)");
 
     interrupts::disable();
     info!("init_paging_and_switch_cr3: interrupts disabled");
@@ -519,47 +514,210 @@ pub unsafe fn init_paging_and_switch_cr3(
     let mut alloc = BootFrameAllocator::new(memory_map);
     info!("init_paging_and_switch_cr3: BootFrameAllocator created");
 
-    let pml4_frame = create_empty_pml4(&mut alloc);
+    // Use the CURRENT active PML4 instead of creating a new one
+    let (current_pml4_frame, _) = Cr3::read();
     info!(
-        "init_paging_and_switch_cr3: PML4 frame at {:#x}",
-        pml4_frame.start_address().as_u64()
+        "init_paging_and_switch_cr3: current PML4 frame at {:#x}",
+        current_pml4_frame.start_address().as_u64()
     );
 
-    let pml4_ptr = pml4_frame.start_address().as_u64() as *mut PageTable;
+    // Assume identity mapping for low memory in current tables
+    let pml4_ptr = current_pml4_frame.start_address().as_u64() as *mut PageTable;
     let mut mapper = OffsetPageTable::new(&mut *pml4_ptr, VirtAddr::new(0));
-    info!("init_paging_and_switch_cr3: OffsetPageTable created");
+    info!("init_paging_and_switch_cr3: OffsetPageTable over existing PML4");
 
     let start: u64 = 0;
     let end: u64 = 0x1_0000_0000; // 4 GiB
 
     info!(
-        "init_paging_and_switch_cr3: mapping low window {:#x}..{:#x}",
-        start, end
+        "init_paging_and_switch_cr3: mapping HHDM region {:#x}..{:#x} at offset {:#x}",
+        start,
+        end,
+        phys_offset.as_u64()
     );
-
-    identity_map_boot_region(&mut mapper, &mut alloc, start, end);
-    info!("init_paging_and_switch_cr3: identity_map_boot_region done");
 
     map_hhdm_region(&mut mapper, &mut alloc, phys_offset, start, end);
     info!("init_paging_and_switch_cr3: map_hhdm_region done");
 
-    
-
-    info!("init_paging_and_switch_cr3: about to write CR3");
-
-    let old_rsp: u64;
-    core::arch::asm!("mov {}, rsp", out(reg) old_rsp);
-    info!("init_paging_and_switch_cr3: old RSP = {:#x}", old_rsp);
-
-    Cr3::write(pml4_frame, Cr3::read().1);
-    info!("init_paging_and_switch_cr3: CR3 written");
-
-    pml4_frame.start_address()
+    // Do NOT change CR3 yet; just return the current PML4
+    current_pml4_frame.start_address()
 }
 
 
 
+/// Create a new PML4 by copying the identity-mapped PML4 entries
+/// from the currently active UEFI page table.
+/// No HHDM yet. No kernel mappings. Just identity.
+pub unsafe fn create_identity_pml4_copy(
+    frame_alloc: &mut impl FrameAllocator<Size4KiB>,
+    max_phys_addr: u64,
+    framebuffer_addr: u64,
+    framebuffer_len: u64,
+) -> PhysFrame {
+    // 1. Read current CR3
+    let (current_pml4_frame, _) = Cr3::read();
+    let current_pml4_ptr =
+        current_pml4_frame.start_address().as_u64() as *const PageTable;
+    let current_pml4 = &*current_pml4_ptr;
 
+    // 2. Allocate a new PML4 frame
+    let new_pml4_frame = frame_alloc.allocate_frame().expect("no frame for new PML4");
+    let new_pml4_ptr =
+        new_pml4_frame.start_address().as_u64() as *mut PageTable;
+
+    // 3. Zero it
+    new_pml4_ptr.write(PageTable::new());
+    let new_pml4 = &mut *new_pml4_ptr;
+
+    // 4. Copy PML4 entries that cover identity-mapped RAM
+    let end = VirtAddr::new(max_phys_addr - 1);
+    for p4 in 0..=usize::from(end.p4_index()) {
+        new_pml4[p4] = current_pml4[p4].clone();
+    }
+
+    // 5. Copy PML4 entries that cover the framebuffer
+    let fb_start = VirtAddr::new(framebuffer_addr);
+    let fb_end = fb_start + framebuffer_len;
+    for p4 in usize::from(fb_start.p4_index())..=usize::from(fb_end.p4_index()) {
+        new_pml4[p4] = current_pml4[p4].clone();
+    }
+
+    new_pml4_frame
+}
+
+
+/// Build Bulldog's first paging setup:
+/// - Identity map 0..4 GiB using 2 MiB pages
+/// - No HHDM, no higher-half, no UEFI PML4
+/// Returns the PML4 frame to load into CR3.
+fn alloc_low_frame(alloc: &mut BootFrameAllocator) -> PhysFrame {
+    loop {
+        let frame = alloc.allocate_frame().expect("out of frames");
+        let addr = frame.start_address().as_u64();
+        // keep only frames below 1 GiB
+        if addr < 0x4000_0000 {
+            return frame;
+        }
+        // otherwise skip and try next
+    }
+}
+
+pub unsafe fn create_bulldog_identity_paging(
+    frame_alloc: &mut BootFrameAllocator,
+) -> PhysFrame {
+    use x86_64::structures::paging::PageTableFlags;
+
+    // 1) Allocate PML4, PDPT, and 4 PDs (for 4 GiB), all from low memory
+    let pml4_frame = alloc_low_frame(frame_alloc);
+    let pdpt_frame = alloc_low_frame(frame_alloc);
+
+    let pd0_frame = alloc_low_frame(frame_alloc);
+    let pd1_frame = alloc_low_frame(frame_alloc);
+    let pd2_frame = alloc_low_frame(frame_alloc);
+    let pd3_frame = alloc_low_frame(frame_alloc);
+
+    // 2) Zero them via (assumed) identity mapping
+    let pml4 = pml4_frame.start_address().as_u64() as *mut PageTable;
+    let pdpt = pdpt_frame.start_address().as_u64() as *mut PageTable;
+    let pd0  = pd0_frame.start_address().as_u64() as *mut PageTable;
+    let pd1  = pd1_frame.start_address().as_u64() as *mut PageTable;
+    let pd2  = pd2_frame.start_address().as_u64() as *mut PageTable;
+    let pd3  = pd3_frame.start_address().as_u64() as *mut PageTable;
+
+    pml4.write(PageTable::new());
+    pdpt.write(PageTable::new());
+    pd0.write(PageTable::new());
+    pd1.write(PageTable::new());
+    pd2.write(PageTable::new());
+    pd3.write(PageTable::new());
+
+    let pml4 = &mut *pml4;
+    let pdpt = &mut *pdpt;
+    let pd0  = &mut *pd0;
+    let pd1  = &mut *pd1;
+    let pd2  = &mut *pd2;
+    let pd3  = &mut *pd3;
+
+    // 3) Wire PML4[0] -> PDPT
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+    pml4[0].set_frame(pdpt_frame, flags);
+
+    // 4) Wire PDPT[0..3] -> PDs
+    pdpt[0].set_frame(pd0_frame, flags);
+    pdpt[1].set_frame(pd1_frame, flags);
+    pdpt[2].set_frame(pd2_frame, flags);
+    pdpt[3].set_frame(pd3_frame, flags);
+
+    // 5) Fill PDs with 2 MiB identity entries
+    let huge_flags = flags | PageTableFlags::HUGE_PAGE;
+
+    // PD0: 0..1 GiB
+    for (i, entry) in pd0.iter_mut().enumerate() {
+        let phys = (i as u64) * 0x20_0000; // 2 MiB
+        entry.set_addr(PhysAddr::new(phys), huge_flags);
+    }
+
+    // PD1: 1..2 GiB
+    for (i, entry) in pd1.iter_mut().enumerate() {
+        let phys = 0x4000_0000 + (i as u64) * 0x20_0000;
+        entry.set_addr(PhysAddr::new(phys), huge_flags);
+    }
+
+    // PD2: 2..3 GiB
+    for (i, entry) in pd2.iter_mut().enumerate() {
+        let phys = 0x8000_0000 + (i as u64) * 0x20_0000;
+        entry.set_addr(PhysAddr::new(phys), huge_flags);
+    }
+
+    // PD3: 3..4 GiB
+    for (i, entry) in pd3.iter_mut().enumerate() {
+        let phys = 0xC000_0000 + (i as u64) * 0x20_0000;
+        entry.set_addr(PhysAddr::new(phys), huge_flags);
+    }
+
+    pml4_frame
+}
+
+pub unsafe fn create_bootstrap_identity_pml4(
+    frame_alloc: &mut BootFrameAllocator,
+) -> PhysFrame {
+    use x86_64::structures::paging::PageTableFlags;
+
+    // Allocate just a PML4 and a single PDPT + PD for now (0..1 GiB)
+    let pml4_frame = alloc_low_frame(frame_alloc);
+    let pdpt_frame = alloc_low_frame(frame_alloc);
+    let pd0_frame  = alloc_low_frame(frame_alloc);
+
+    let pml4_ptr = pml4_frame.start_address().as_u64() as *mut PageTable;
+    let pdpt_ptr = pdpt_frame.start_address().as_u64() as *mut PageTable;
+    let pd0_ptr  = pd0_frame.start_address().as_u64() as *mut PageTable;
+
+    // Zero them (we still rely on low‑mem identity here, but only for a tiny set)
+    pml4_ptr.write(PageTable::new());
+    pdpt_ptr.write(PageTable::new());
+    pd0_ptr.write(PageTable::new());
+
+    let pml4 = &mut *pml4_ptr;
+    let pdpt = &mut *pdpt_ptr;
+    let pd0  = &mut *pd0_ptr;
+
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+
+    // PML4[0] → PDPT
+    pml4[0].set_frame(pdpt_frame, flags);
+
+    // PDPT[0] → PD0
+    pdpt[0].set_frame(pd0_frame, flags);
+
+    // PD0: 0..1 GiB, 2 MiB pages
+    let huge_flags = flags | PageTableFlags::HUGE_PAGE;
+    for (i, entry) in pd0.iter_mut().enumerate() {
+        let phys = (i as u64) * 0x20_0000; // 2 MiB
+        entry.set_addr(PhysAddr::new(phys), huge_flags);
+    }
+
+    pml4_frame
+}
 
 
 

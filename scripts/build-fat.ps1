@@ -10,7 +10,7 @@ cargo +nightly build -p bulldog-bootloader --release --target x86_64-unknown-uef
 
 
 # 2. Build kernel
-cargo +nightly build -p kernel --release --target x86_64-unknown-none -Z build-std=core,alloc
+cargo +nightly build -p kernel-bin --release --target x86_64-unknown-none -Z build-std=core,alloc
 
 Write-Host "[build] Build complete."
 
@@ -39,7 +39,7 @@ mmd -i fat.img ::/EFI/BOOT
 # 7. Copy bootloader + kernel
 Write-Host "[fat] Copying bootloader + kernel..."
 mcopy -o -i fat.img target\x86_64-unknown-uefi\release\bulldog-bootloader.efi ::/EFI/BOOT/BOOTX64.EFI
-mcopy -o -i fat.img target\x86_64-unknown-none\release\kernel ::/EFI/BOOT/kernel.elf
+mcopy -o -i fat.img target\x86_64-unknown-none\release\kernel-bin ::/EFI/BOOT/kernel.elf
 
 
 Write-Host "[fat] FAT image ready."

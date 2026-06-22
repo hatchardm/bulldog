@@ -1,9 +1,9 @@
 [workspace]
 members = [
     "kernel",
-    "bulldog-syscall",
-    "boot-proto",
+    "kernel-bin",
     "bootloader",
+    "boot-proto",
 ]
 
 resolver = "2"

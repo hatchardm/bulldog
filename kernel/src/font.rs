@@ -4,15 +4,18 @@ use noto_sans_mono_bitmap::{get_raster, FontWeight, RasterHeight, RasterizedChar
 /// Uses the `noto_sans_mono_bitmap` crate with Regular weight and 16‑pixel height.
 /// Returns `None` if the character is not available in the font.
 pub fn get_glyph(c: char) -> Option<RasterizedChar> {
- //   get_raster(c, FontWeight::Regular, RasterHeight::Size16)
- None
+    get_raster(c, FontWeight::Regular, RasterHeight::Size16)
 }
 
+
+
+
+
+/* 
 /// 8×8 bitmap font data for ASCII characters 0x20 (' ') to 0x7F (DEL).
 /// Each entry is an array of 8 bytes, where each bit represents a pixel.
 /// This provides a fallback font for simple text rendering when
 /// rasterized glyphs are unavailable.
-
 pub const FONT8X8: [[u8; 8]; 96] = [
     [0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00], // ' '
     [0x18,0x3C,0x3C,0x18,0x18,0x00,0x18,0x00], // '!'
@@ -112,4 +115,4 @@ pub const FONT8X8: [[u8; 8]; 96] = [
     [0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00], // DEL (0x7F)
 
 ];
-
+*/
