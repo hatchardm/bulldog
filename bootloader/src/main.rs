@@ -164,7 +164,10 @@ fn main() -> Status {
     // Exit Boot Services
     // -------------------------------
     info!("about to call ExitBootServices");
+
     let memory_map_owned = unsafe { uefi_boot::exit_boot_services(None) };
+
+
     info!("ExitBootServices returned");
 
     // -------------------------------
@@ -172,16 +175,29 @@ fn main() -> Status {
     // -------------------------------
     // 1) Set up HHDM mappings in the existing PML4 (no CR3 change)
 
-/* 
+ 
     unsafe {
-        boot::init_paging_and_switch_cr3(
-            &memory_map_owned,
-            x86_64::VirtAddr::new(PHYS_MEM_OFFSET),
-            unsafe { KERNEL_PTR },
-            unsafe { KERNEL_LEN },
-        );
-    }
+    let mut port = x86_64::instructions::port::Port::new(0x3F8);
+    port.write(b'P');   // before paging init
+    port.write(b'\n');
+}
+/* 
+unsafe {
+    boot::init_paging_and_switch_cr3(
+        &memory_map_owned,
+        x86_64::VirtAddr::new(PHYS_MEM_OFFSET),
+        unsafe { KERNEL_PTR },
+        unsafe { KERNEL_LEN },
+    );
+}
 */
+unsafe {
+    let mut port = x86_64::instructions::port::Port::new(0x3F8);
+    port.write(b'p');   // after paging init
+    port.write(b'\n');
+}
+
+
     // 2) Fill BootInfo.memory_regions from the UEFI memory map
     fill_memory_regions_from_map(&mut boot_info, &memory_map_owned);
 

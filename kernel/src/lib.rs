@@ -30,6 +30,9 @@ use x86_64::{
     },
 };
 
+use boot_proto::BootInfo;
+
+
 #[macro_use]
 pub mod macros;
 pub mod writer;
@@ -43,14 +46,13 @@ pub mod apic;
 pub mod time;
 pub mod font;
 pub mod color;
-//pub mod logger;
+pub mod logger;
 pub mod syscall;
 pub mod serial;
 pub mod vfs;
 pub mod elf;
 pub mod user_mode;
 pub mod text;
-pub mod console;
 pub mod font8x16;
 
 #[cfg(feature = "syscall_tests")]
@@ -64,6 +66,21 @@ use crate::memory::{
 };
 use crate::syscall::fd::init_fd_table_with_std;
 use crate::vfs::init::vfs_init;
+
+
+pub fn entry(_boot_info: &'static mut BootInfo) {
+    unsafe {
+        let mut port = x86_64::instructions::port::Port::new(0x3F8);
+        port.write(b'E');
+        port.write(b'\n');
+    }
+
+    loop {
+        unsafe { core::arch::asm!("hlt"); }
+    }
+}
+
+
 
 
 

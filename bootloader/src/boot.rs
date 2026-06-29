@@ -280,6 +280,8 @@ pub fn jump_to_kernel(
         ehdr.e_phnum
     );
 
+    apply_relocations(elf);
+
     for i in 0..ehdr.e_phnum {
         let ph_ptr = unsafe { ph_base.add(i as usize) };
         info!("PHDR {}: ph_ptr = {:#x}", i, ph_ptr as u64);
@@ -330,6 +332,25 @@ pub fn jump_to_kernel(
 
     info!("Jumping to kernel entry = {:#x}", entry_addr);
 
+    unsafe {
+    let mut port = x86_64::instructions::port::Port::new(0x3F8);
+    port.write(b'J');   // already there
+    port.write(b'\n');
+
+    // NEW: dump entry_addr low bytes so we know what we're calling
+    let val = entry_addr as u64;
+    for shift in (0..16).step_by(4) {
+        let nibble = ((val >> shift) & 0xF) as u8;
+        let ch = match nibble {
+            0..=9 => b'0' + nibble,
+            10..=15 => b'a' + (nibble - 10),
+            _ => b'?'
+        };
+        port.write(ch);
+    }
+    port.write(b'\n');
+}
+
     type KernelEntry = extern "sysv64" fn(&'static mut BulldogBootInfo) -> !;
 
     let entry: KernelEntry = unsafe { mem::transmute(entry_addr) };
@@ -344,16 +365,41 @@ pub fn jump_to_kernel(
         info!("jump_to_kernel: KERNEL_STACK base = {:#x}", stack_base);
         info!("jump_to_kernel: KERNEL_STACK end  = {:#x}", stack_top);
 
-        core::arch::asm!(
-            "mov rsp, {stack}",
-            "and rsp, -16",
-            "sub rsp, 8",
-            "call {entry}",
-            stack = in(reg) stack_top,
-            entry = in(reg) entry,
-            in("rdi") boot_info_static,
-            options(noreturn)
-        );
+unsafe {
+    let mut port = x86_64::instructions::port::Port::new(0x3F8);
+    port.write(b'J');
+    port.write(b'\n');
+}
+
+
+
+type KernelEntry = extern "sysv64" fn(&'static mut BulldogBootInfo) -> !;
+
+let entry: KernelEntry = unsafe { core::mem::transmute(entry_addr) };
+
+let boot_info_static: &'static mut BulldogBootInfo =
+    unsafe { &mut *(boot_info as *mut BulldogBootInfo) };
+
+unsafe {
+    let stack_base = (&raw mut KERNEL_STACK.0 as *mut u8) as u64;
+    let stack_top  = (&raw mut KERNEL_STACK.0 as *mut u8).add(100 * 1024) as u64;
+
+    info!("jump_to_kernel: KERNEL_STACK base = {:#x}", stack_base);
+    info!("jump_to_kernel: KERNEL_STACK end  = {:#x}", stack_top);
+
+    // Set RSP and then just call via Rust
+    core::arch::asm!(
+        "mov rsp, {stack}",
+        "and rsp, -16",
+        "sub rsp, 8",
+        stack = in(reg) stack_top,
+        options(nostack)
+    );
+
+    // Now do a normal Rust call
+    entry(boot_info_static);
+}
+
     }
 }
 

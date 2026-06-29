@@ -10,4 +10,3 @@ uefi-raw = "0.14.0"
 log = "0.4"
 boot-proto = { path = "../boot-proto" }
 
-# REMOVE the entire [[bin]] section

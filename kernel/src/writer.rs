@@ -19,15 +19,24 @@ impl<'a> TextWriter<'a> {
     }
 
     pub fn write_char(&mut self, ch: u8) {
-        draw_char_8x16(self.fb, ch, self.x, self.y, self.fg, self.bg);
+        unsafe {
+            draw_char_8x16(self.fb, self.x, self.y, ch, self.fg, self.bg);
+        }
+
         self.x += self.char_w;
 
-        // crude wrap
+        // wrap horizontally
         if self.x + self.char_w >= self.fb.width {
             self.x = 0;
             self.y += self.char_h;
         }
+
+        // wrap vertically (no scrolling yet)
+        if self.y + self.char_h >= self.fb.height {
+            self.y = 0;
+        }
     }
 }
+
 
 

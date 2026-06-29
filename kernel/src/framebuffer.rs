@@ -27,25 +27,26 @@ pub enum PixelFormat {
 }
 
 impl KernelFramebuffer {
-pub fn from_bootinfo(boot: &ProtoBootInfo, _phys_mem_offset: VirtAddr) -> Self {
-    let fb = &boot.framebuffer;
+pub fn from_bootinfo(boot: &ProtoBootInfo, phys_mem_offset: VirtAddr) -> Self {
+        let fb = &boot.framebuffer;
 
-    // fb.addr is actually a valid VIRTUAL framebuffer pointer from the bootloader
-    let ptr = fb.addr as *mut u8;
+        // Convert PHYSICAL framebuffer address → VIRTUAL (HHDM)
+        let virt_addr = fb.addr + phys_mem_offset.as_u64();
+        let ptr = virt_addr as *mut u8;
 
-    Self {
-        ptr,
-        width: fb.width as usize,
-        height: fb.height as usize,
-        pitch: fb.stride as usize * 4, // bytes per row (32bpp)
-        pixel_format: match fb.pixel_format {
-            ProtoPixelFormat::Rgb => PixelFormat::Rgb,
-            ProtoPixelFormat::Bgr => PixelFormat::Bgr,
-            ProtoPixelFormat::Bitmask => PixelFormat::Bitmask,
-            ProtoPixelFormat::BltOnly => PixelFormat::BltOnly,
-        },
+        Self {
+            ptr,
+            width: fb.width as usize,
+            height: fb.height as usize,
+            pitch: fb.stride as usize * 4, // bytes per row (32bpp)
+            pixel_format: match fb.pixel_format {
+                ProtoPixelFormat::Rgb => PixelFormat::Rgb,
+                ProtoPixelFormat::Bgr => PixelFormat::Bgr,
+                ProtoPixelFormat::Bitmask => PixelFormat::Bitmask,
+                ProtoPixelFormat::BltOnly => PixelFormat::BltOnly,
+            },
+        }
     }
-}
 
 
 
