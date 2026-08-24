@@ -44,17 +44,18 @@ pub fn serial_print_u64(mut n: u64) {
     }
 }
 
-/// Print a u64 as 0xXXXXXXXXXXXXXXX hex.
-pub fn serial_print_hex_u64(v: u64) {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
 
-    serial_print("0x");
-
-    for shift in (0..64).rev().step_by(4) {
-        let nibble = ((v >> shift) & 0xF) as usize;
-        serial_write_byte(HEX[nibble]);
+pub fn serial_print_hex_u64(val: u64) {
+    unsafe {
+        let mut port = x86_64::instructions::port::Port::new(0x3F8);
+        for shift in (0..64).step_by(4).rev() {
+            let nibble = ((val >> shift) & 0xF) as u8;
+            let ch = if nibble < 10 { b'0' + nibble } else { b'a' + (nibble - 10) };
+            port.write(ch);
+        }
     }
 }
+
 
 
 

@@ -9,4 +9,4 @@ uefi = { version = "0.37.0", features = ["alloc", "logger", "global_allocator"] 
 uefi-raw = "0.14.0"
 log = "0.4"
 boot-proto = { path = "../boot-proto" }
-
+xmas-elf = "0.8"

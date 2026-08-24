@@ -1,4 +1,4 @@
-ENTRY(kernel_main)
+ENTRY(kernel_entry)
 
 SECTIONS {
     . = 1M;
@@ -16,4 +16,5 @@ SECTIONS {
         KEEP(*(.stack))
     }
 }
+
 

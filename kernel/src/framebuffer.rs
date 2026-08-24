@@ -2,7 +2,7 @@
 
 use crate::color::Color;
 use boot_proto::{BootInfo as ProtoBootInfo, PixelFormat as ProtoPixelFormat};
-use x86_64::VirtAddr;
+use x86_64::{PhysAddr, VirtAddr};
 
 #[repr(C)]
 pub struct KernelFramebuffer {
@@ -27,26 +27,23 @@ pub enum PixelFormat {
 }
 
 impl KernelFramebuffer {
-pub fn from_bootinfo(boot: &ProtoBootInfo, phys_mem_offset: VirtAddr) -> Self {
-        let fb = &boot.framebuffer;
+pub fn from_bootinfo(boot_info: &ProtoBootInfo) -> Self {
+    let fb_virt = boot_info.physical_memory_offset + boot_info.framebuffer.addr;
+    let fb = &boot_info.framebuffer;
 
-        // Convert PHYSICAL framebuffer address → VIRTUAL (HHDM)
-        let virt_addr = fb.addr + phys_mem_offset.as_u64();
-        let ptr = virt_addr as *mut u8;
-
-        Self {
-            ptr,
-            width: fb.width as usize,
-            height: fb.height as usize,
-            pitch: fb.stride as usize * 4, // bytes per row (32bpp)
-            pixel_format: match fb.pixel_format {
-                ProtoPixelFormat::Rgb => PixelFormat::Rgb,
-                ProtoPixelFormat::Bgr => PixelFormat::Bgr,
-                ProtoPixelFormat::Bitmask => PixelFormat::Bitmask,
-                ProtoPixelFormat::BltOnly => PixelFormat::BltOnly,
-            },
-        }
+    Self {
+        ptr: fb_virt as *mut u8,                 // FIXED
+        width: fb.width as usize,
+        height: fb.height as usize,
+        pitch: (fb.stride as usize) * 4,         // FIXED
+        pixel_format: match fb.pixel_format {
+            ProtoPixelFormat::Rgb => PixelFormat::Rgb,
+            ProtoPixelFormat::Bgr => PixelFormat::Bgr,
+            ProtoPixelFormat::Bitmask => PixelFormat::Bitmask,
+            ProtoPixelFormat::BltOnly => PixelFormat::BltOnly,
+        },
     }
+}
 
 
 
@@ -88,8 +85,6 @@ pub fn from_bootinfo(boot: &ProtoBootInfo, phys_mem_offset: VirtAddr) -> Self {
         unsafe { pixel_ptr.add(idx).write_volatile(color); }
     }
 
-   
-
     pub fn fill_rect(&mut self, x: usize, y: usize, w: usize, h: usize, color: u32) {
         let max_x = (x + w).min(self.width);
         let max_y = (y + h).min(self.height);
@@ -112,9 +107,8 @@ pub fn from_bootinfo(boot: &ProtoBootInfo, phys_mem_offset: VirtAddr) -> Self {
             return;
         }
 
-        // pitch is BYTES per row
         let bytes_per_pixel = 4;
-        let row_start = y * self.pitch;          // byte offset to row
+        let row_start = y * self.pitch;
         let offset = row_start + x * bytes_per_pixel;
 
         unsafe {
@@ -123,7 +117,6 @@ pub fn from_bootinfo(boot: &ProtoBootInfo, phys_mem_offset: VirtAddr) -> Self {
         }
     }
 }
-
 
 
 

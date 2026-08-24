@@ -1,16 +1,23 @@
 #![no_std]
 
+pub const MAX_MEMORY_REGIONS: usize = 128;
+
 #[repr(C)]
 pub struct BootInfo {
-    pub framebuffer: Framebuffer,      // always present
-    pub framebuffer_present: u8,       // 0 = no fb, 1 = valid
-    pub _pad0: [u8; 7],                // padding to 16‑byte align
-
+    pub framebuffer: Framebuffer,
+    pub framebuffer_present: u8,
+    pub _pad0: [u8; 7],
     pub physical_memory_offset: u64,
-
     pub memory_regions: *const MemoryRegion,
     pub memory_region_count: usize,
+    pub memory_regions_buffer: [MemoryRegion; MAX_MEMORY_REGIONS],
+    pub kernel_phys_start: u64,
+    pub kernel_phys_end: u64,
+    pub kernel_entry_phys: u64,
+    pub framebuffer_virt: u64,
+
 }
+
 
 #[repr(C)]
 pub struct Framebuffer {
@@ -31,6 +38,7 @@ pub enum PixelFormat {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct MemoryRegion {
     pub start: u64,
     pub end: u64,

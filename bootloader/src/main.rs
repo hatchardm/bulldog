@@ -6,7 +6,8 @@ extern crate alloc;
 use uefi::prelude::*;
 use uefi::boot as uefi_boot;
 use uefi::proto::console::text::Input;
-use uefi::proto::console::gop::PixelFormat;
+use uefi::proto::console::gop::PixelFormat as UefiPixelFormat;
+use uefi::boot::MemoryType;
 
 use log::info;
 
@@ -16,11 +17,14 @@ mod console;
 mod color;
 mod text;
 mod boot;
+mod paging;
 
 use gop::init as init_graphics;
 use text::load_font;
 use console::Console;
 use color::Color;
+use paging::setup_minimal_paging;
+use paging::HHDM_BASE;
 
 use boot::{
     load_kernel,
@@ -28,16 +32,18 @@ use boot::{
     find_rsdp,
     acpi_revision,
     fill_memory_regions_from_map,
-    init_paging_and_switch_cr3,
 };
 
 use boot_proto::{
-    BootInfo as BulldogBootInfo,
-    Framebuffer as BulldogFramebuffer,
-    PixelFormat as BulldogPixelFormat,
+    BootInfo,
+    Framebuffer,
+    PixelFormat,
+    MemoryRegion,
+    MemoryRegionKind,
+    MAX_MEMORY_REGIONS,
 };
 
-const PHYS_MEM_OFFSET: u64 = 0xffff800000000000;
+const PHYS_MEM_OFFSET: u64 = HHDM_BASE;
 
 #[repr(align(16))]
 struct AlignedStack([u8; 64 * 1024]);
@@ -76,6 +82,8 @@ fn main() -> Status {
             return Status::LOAD_ERROR;
         }
     };
+
+    let gop_mode = ctx.gop.current_mode_info();
 
     info!(
         "GOP initialized: {}x{} stride {}",
@@ -133,32 +141,59 @@ fn main() -> Status {
         console.write_str("Preparing kernel handover...\n");
     }
 
-    // -------------------------------
-    // Build BootInfo
-    // -------------------------------
-    let framebuffer = BulldogFramebuffer {
-        addr: fb_addr_phys,
-        width: fb_width as u32,
-        height: fb_height as u32,
-        stride: fb_stride as u32,
-        pixel_format: match ctx.mode.pixel_format() {
-            PixelFormat::Rgb => BulldogPixelFormat::Rgb,
-            PixelFormat::Bgr => BulldogPixelFormat::Bgr,
-            PixelFormat::Bitmask => BulldogPixelFormat::Bitmask,
-            _ => BulldogPixelFormat::BltOnly,
-        },
-    };
+// -------------------------------
+// Allocate BootInfo in LOADER_DATA
+// -------------------------------
+let boot_info_pool = uefi_boot::allocate_pool(
+    MemoryType::LOADER_DATA,
+    core::mem::size_of::<BootInfo>(),
+).expect("Failed to allocate BootInfo");
 
-    let mut boot_info = BulldogBootInfo {
-        framebuffer,
-        framebuffer_present: 1,
-        _pad0: [0; 7],
-        physical_memory_offset: PHYS_MEM_OFFSET,
-        memory_regions: core::ptr::null(),
-        memory_region_count: 0,
-    };
+let boot_info: &mut BootInfo = unsafe {
+    &mut *(boot_info_pool.as_ptr() as *mut BootInfo)
+};
 
-    info!("Framebuffer phys addr: {:#x}", fb_addr_phys);
+// -------------------------------
+// Build Framebuffer (correct location)
+// -------------------------------
+let proto_pf = match gop_mode.pixel_format() {
+    UefiPixelFormat::Rgb      => PixelFormat::Rgb,
+    UefiPixelFormat::Bgr      => PixelFormat::Bgr,
+    UefiPixelFormat::Bitmask  => PixelFormat::Bitmask,
+    UefiPixelFormat::BltOnly  => PixelFormat::BltOnly,
+};
+
+let framebuffer = Framebuffer {
+    addr: fb_addr_phys,
+    width: fb_width as u32,
+    height: fb_height as u32,
+    stride: fb_stride as u32,
+    pixel_format: proto_pf,
+};
+
+info!("Framebuffer phys addr: {:#x}", fb_addr_phys);
+
+// -------------------------------
+// Initialize BootInfo (single clean initialization)
+// -------------------------------
+*boot_info = BootInfo {
+    framebuffer,
+    framebuffer_present: 1,
+    _pad0: [0; 7],
+    physical_memory_offset: PHYS_MEM_OFFSET,
+    memory_regions: core::ptr::null(),
+    memory_region_count: 0,
+    memory_regions_buffer: [MemoryRegion {
+        start: 0,
+        end: 0,
+        kind: MemoryRegionKind::Reserved,
+    }; MAX_MEMORY_REGIONS],
+    kernel_phys_start: 0,
+    kernel_phys_end: 0,
+    kernel_entry_phys: 0,
+    framebuffer_virt: fb_addr_phys,
+};
+
 
     // -------------------------------
     // Exit Boot Services
@@ -167,61 +202,31 @@ fn main() -> Status {
 
     let memory_map_owned = unsafe { uefi_boot::exit_boot_services(None) };
 
-
     info!("ExitBootServices returned");
 
-    // -------------------------------
-    // Paging + BootInfo memory map
-    // -------------------------------
-    // 1) Set up HHDM mappings in the existing PML4 (no CR3 change)
+    
 
- 
-    unsafe {
-    let mut port = x86_64::instructions::port::Port::new(0x3F8);
-    port.write(b'P');   // before paging init
-    port.write(b'\n');
-}
-/* 
-unsafe {
-    boot::init_paging_and_switch_cr3(
-        &memory_map_owned,
-        x86_64::VirtAddr::new(PHYS_MEM_OFFSET),
-        unsafe { KERNEL_PTR },
-        unsafe { KERNEL_LEN },
-    );
-}
-*/
-unsafe {
-    let mut port = x86_64::instructions::port::Port::new(0x3F8);
-    port.write(b'p');   // after paging init
-    port.write(b'\n');
-}
+    fill_memory_regions_from_map(boot_info, &memory_map_owned);
 
 
-    // 2) Fill BootInfo.memory_regions from the UEFI memory map
-    fill_memory_regions_from_map(&mut boot_info, &memory_map_owned);
+
+
+
+
+    // Paging + HHDM
+    
+
+    setup_minimal_paging(&memory_map_owned);
+
+    
+
+
 
     // -------------------------------
-    // TEMP: prove we’re alive after paging setup
-    // -------------------------------
-    let fb_ptr = fb_addr_phys as *mut u32;
-    let fb_len = (fb_stride as usize) * (fb_height as usize);
-
-    unsafe {
-        let fb = core::slice::from_raw_parts_mut(fb_ptr, fb_len);
-        for pixel in fb.iter_mut() {
-            *pixel = 0x00000000; // black
-        }
-        for pixel in fb.iter_mut() {
-            *pixel = 0x0000FF00; // green (BGR)
-        }
-    }
-
-    // -------------------------------
-    // Jump to kernel
+    // Jump to kernel with safe BootInfo
     // -------------------------------
     unsafe {
-        jump_to_kernel(KERNEL_PTR, KERNEL_LEN, &mut boot_info);
+        jump_to_kernel(KERNEL_PTR, KERNEL_LEN, boot_info);
     }
 }
 
@@ -229,8 +234,6 @@ unsafe {
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
-
-
 
 
 

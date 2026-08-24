@@ -21,6 +21,7 @@ extern crate rlibc;
 
 use alloc::vec::Vec;
 use boot_proto::MemoryRegion;   // ← updated
+use boot_proto::BootInfo;
 use log::{info, debug, error};
 use x86_64::{
     PhysAddr, VirtAddr,
@@ -30,7 +31,7 @@ use x86_64::{
     },
 };
 
-use boot_proto::BootInfo;
+use crate::serial::{serial_println, serial_print, serial_print_hex_u64};
 
 
 #[macro_use]
@@ -54,6 +55,7 @@ pub mod elf;
 pub mod user_mode;
 pub mod text;
 pub mod font8x16;
+pub mod paging;
 
 #[cfg(feature = "syscall_tests")]
 mod tests;
@@ -66,19 +68,36 @@ use crate::memory::{
 };
 use crate::syscall::fd::init_fd_table_with_std;
 use crate::vfs::init::vfs_init;
+use crate::framebuffer::KernelFramebuffer;
+
+#[unsafe(no_mangle)]
+pub fn kernel_main(boot_info: &mut BootInfo) -> ! {
+
+    serial_println("Entered kernel_main");
+   
+    let mut fb = KernelFramebuffer::from_bootinfo(boot_info);
 
 
-pub fn entry(_boot_info: &'static mut BootInfo) {
+    let color = fb.pack_color(0xff, 0x00, 0xff);
+    fb.fill_rect(0, 0, 100, 100, color);
+
     unsafe {
         let mut port = x86_64::instructions::port::Port::new(0x3F8);
-        port.write(b'E');
-        port.write(b'\n');
+        port.write(b'2'); port.write(b'\n');
     }
 
     loop {
         unsafe { core::arch::asm!("hlt"); }
     }
 }
+
+
+
+
+
+
+
+
 
 
 
