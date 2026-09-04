@@ -191,13 +191,15 @@ info!("Framebuffer phys addr: {:#x}", fb_addr_phys);
     kernel_phys_start: 0,
     kernel_phys_end: 0,
     kernel_entry_phys: 0,
-    framebuffer_virt: fb_addr_phys,
+    framebuffer_virt: PHYS_MEM_OFFSET + fb_addr_phys,
 };
 
 
     // -------------------------------
     // Exit Boot Services
     // -------------------------------
+
+
     info!("about to call ExitBootServices");
 
     let memory_map_owned = unsafe { uefi_boot::exit_boot_services(None) };

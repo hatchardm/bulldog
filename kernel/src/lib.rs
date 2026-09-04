@@ -72,14 +72,12 @@ use crate::framebuffer::KernelFramebuffer;
 
 #[unsafe(no_mangle)]
 pub fn kernel_main(boot_info: &mut BootInfo) -> ! {
-
     serial_println("Entered kernel_main");
-   
+
     let mut fb = KernelFramebuffer::from_bootinfo(boot_info);
 
-
-    let color = fb.pack_color(0xff, 0x00, 0xff);
-    fb.fill_rect(0, 0, 100, 100, color);
+    let color = fb.pack_color(0x00, 0xff, 0x00); // bright green
+    fb.clear_fast(color);                        // fill entire buffer
 
     unsafe {
         let mut port = x86_64::instructions::port::Port::new(0x3F8);
@@ -90,6 +88,14 @@ pub fn kernel_main(boot_info: &mut BootInfo) -> ! {
         unsafe { core::arch::asm!("hlt"); }
     }
 }
+
+
+
+
+
+
+
+
 
 
 

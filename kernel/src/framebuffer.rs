@@ -28,21 +28,22 @@ pub enum PixelFormat {
 
 impl KernelFramebuffer {
 pub fn from_bootinfo(boot_info: &ProtoBootInfo) -> Self {
-    let fb_virt = boot_info.physical_memory_offset + boot_info.framebuffer.addr;
+    let fb_virt = boot_info.framebuffer_virt;
     let fb = &boot_info.framebuffer;
 
     Self {
-        ptr: fb_virt as *mut u8,                 // FIXED
-        width: fb.width as usize,
-        height: fb.height as usize,
-        pitch: (fb.stride as usize) * 4,         // FIXED
-        pixel_format: match fb.pixel_format {
-            ProtoPixelFormat::Rgb => PixelFormat::Rgb,
-            ProtoPixelFormat::Bgr => PixelFormat::Bgr,
-            ProtoPixelFormat::Bitmask => PixelFormat::Bitmask,
-            ProtoPixelFormat::BltOnly => PixelFormat::BltOnly,
-        },
-    }
+    ptr: boot_info.framebuffer_virt as *mut u8,
+    width: fb.width as usize,
+    height: fb.height as usize,
+    pitch: (fb.stride as usize) * 4,
+    pixel_format: match fb.pixel_format {
+        ProtoPixelFormat::Rgb => PixelFormat::Rgb,
+        ProtoPixelFormat::Bgr => PixelFormat::Bgr,
+        ProtoPixelFormat::Bitmask => PixelFormat::Bitmask,
+        ProtoPixelFormat::BltOnly => PixelFormat::BltOnly,
+    },
+}
+
 }
 
 
