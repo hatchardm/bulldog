@@ -31,11 +31,20 @@ use x86_64::{
     },
 };
 
-use crate::serial::{serial_println, serial_print, serial_print_hex_u64};
+use crate::serial::{serial_println, serial_print, serial_print_hex_u64, serial_print_u64};
+use crate::color::Color;
+use crate::text::draw_char_8x16;
+use crate::font8x16::font8x16;
+use crate::writer::Writer;
+use log::LevelFilter;
+use crate::logger::logger_init;
+use crate::logger::set_framebuffer_ready;
+use crate::writer::WRITER;
 
 
 #[macro_use]
 pub mod macros;
+pub mod serial;
 pub mod writer;
 pub mod framebuffer;
 pub mod interrupts;
@@ -45,11 +54,9 @@ pub mod memory;
 pub mod stack;
 pub mod apic;
 pub mod time;
-pub mod font;
 pub mod color;
 pub mod logger;
 pub mod syscall;
-pub mod serial;
 pub mod vfs;
 pub mod elf;
 pub mod user_mode;
@@ -69,39 +76,61 @@ use crate::memory::{
 use crate::syscall::fd::init_fd_table_with_std;
 use crate::vfs::init::vfs_init;
 use crate::framebuffer::KernelFramebuffer;
+use crate::framebuffer::PixelFormat;
+
 
 #[unsafe(no_mangle)]
 pub fn kernel_main(boot_info: &mut BootInfo) -> ! {
     serial_println("Entered kernel_main");
 
+    // 🎨 Framebuffer setup
     let mut fb = KernelFramebuffer::from_bootinfo(boot_info);
 
-    let color = fb.pack_color(0x00, 0xff, 0x00); // bright green
-    fb.clear_fast(color);                        // fill entire buffer
+    let black = fb.pack_color(Color::BLACK.r, Color::BLACK.g, Color::BLACK.b);
+    fb.clear_fast(black);
 
-    unsafe {
-        let mut port = x86_64::instructions::port::Port::new(0x3F8);
-        port.write(b'2'); port.write(b'\n');
+    // Create writer
+    let mut writer = Writer::new(&mut fb);
+
+    // Configure writer BEFORE moving it
+    writer.fg = Color::WHITE;
+    writer.bg = Color::BLACK;
+
+    // Move writer into global WRITER
+    {
+        let mut w = WRITER.lock();
+        *w = Some(writer);
     }
+
+    set_framebuffer_ready(true);
+
+    // Use WRITER for boot banner
+    {
+        let mut w = WRITER.lock();
+        if let Some(w) = w.as_mut() {
+            w.write_str("🐾 Bulldog Kernel Booting...\n");
+            w.write_str("Framebuffer OK\n");
+            w.write_str("Pixel format detected at runtime\n");
+            w.write_str("Initializing subsystems...\n\n");
+        }
+    }
+
+    // Logging
+    logger_init(LevelFilter::Info);
+    info!("Logger initialized");
+    info!("Framebuffer format: {:?}, size: {}x{}", fb.pixel_format, fb.width, fb.height);
+
+    // Prepare memory inputs for kernel_init
+    let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
+    let memory_regions = boot_info.memory_regions;
+
+
+
 
     loop {
         unsafe { core::arch::asm!("hlt"); }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -274,6 +303,40 @@ pub fn hlt_loop() -> ! {
 
         #[cfg(not(feature = "syscall_tests"))]
         crate::time::health_check(1000);
+    }
+}
+
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    // Serial
+    unsafe {
+        serial_print("[PANIC] ");
+        if let Some(location) = info.location() {
+            serial_print("at ");
+            serial_print(location.file());
+            serial_print(":");
+            serial_print_hex_u64(location.line() as u64);
+        }
+        serial_print("\n");
+    }
+
+    // Framebuffer
+    if crate::logger::FB_READY.load(core::sync::atomic::Ordering::Relaxed) {
+        let mut guard = crate::writer::WRITER.lock();
+        if let Some(w) = guard.as_mut() {
+            w.set_log_level_color(crate::writer::LogLevel::Error);
+            w.write_str("[PANIC] ");
+            if let Some(location) = info.location() {
+                use core::fmt::Write;
+                let _ = write!(w, "at {}:{}\n", location.file(), location.line());
+            } else {
+                w.write_str("no location info\n");
+            }
+        }
+    }
+
+    loop {
+        unsafe { core::arch::asm!("hlt"); }
     }
 }
 

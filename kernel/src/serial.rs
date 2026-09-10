@@ -57,5 +57,3 @@ pub fn serial_print_hex_u64(val: u64) {
 }
 
 
-
-

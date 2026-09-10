@@ -8,16 +8,6 @@ use kernel::paging;
 use kernel::serial::{serial_println, serial_print, serial_print_hex_u64};
 use kernel::kernel_main;   // FIXED: import from kernel crate
 
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {
-        unsafe { core::arch::asm!("hlt"); }
-    }
-}
-
-
-
-
 
 
 #[unsafe(no_mangle)]
