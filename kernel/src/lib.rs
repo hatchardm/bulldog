@@ -20,6 +20,7 @@ extern crate alloc;
 extern crate rlibc;
 
 use alloc::vec::Vec;
+use alloc::boxed::Box;
 use boot_proto::MemoryRegion;   // ← updated
 use boot_proto::BootInfo;
 use log::{info, debug, error};
@@ -77,6 +78,10 @@ use crate::syscall::fd::init_fd_table_with_std;
 use crate::vfs::init::vfs_init;
 use crate::framebuffer::KernelFramebuffer;
 use crate::framebuffer::PixelFormat;
+use crate::paging::{MAPPER, FRAME_ALLOCATOR};
+use crate::allocator::init_heap;
+
+
 
 
 #[unsafe(no_mangle)]
@@ -122,19 +127,25 @@ pub fn kernel_main(boot_info: &mut BootInfo) -> ! {
 
     // Prepare memory inputs for kernel_init
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-    let memory_regions = boot_info.memory_regions;
+    let memory_regions = unsafe {
+    core::slice::from_raw_parts(
+        boot_info.memory_regions,
+        boot_info.memory_region_count,
+    )
+};
 
 
-
-
-    loop {
-        unsafe { core::arch::asm!("hlt"); }
-    }
+match kernel_init(memory_regions, phys_mem_offset) {
+    Ok(_) => info!("kernel_init completed successfully"),
+    Err(_) => error!("kernel_init failed"),
 }
 
+ hlt_loop();
 
-
-
+  //  loop {
+  //      unsafe { core::arch::asm!("hlt"); }
+  //  }
+}
 
 
 
@@ -148,6 +159,71 @@ pub fn kernel_main(boot_info: &mut BootInfo) -> ! {
 /// - Configures APIC and enables interrupts.
 ///
 /// Returns `Ok(())` if initialization succeeds, or a `MapToError` if paging fails.
+/// 
+ 
+pub fn kernel_init(
+    memory_regions: &'static [MemoryRegion],
+    phys_mem_offset: VirtAddr,
+) -> Result<(), ()> {
+    info!("kernel_init: starting");
+
+    info!("Memory map from bootloader:");
+    for region in memory_regions {
+        info!(
+            "  kind={:?}, start={:#018x}, end={:#018x}",
+            region.kind,
+            region.start,
+            region.end,
+        );
+    }
+
+    info!("Physical memory offset (HHDM): {:#018x}", phys_mem_offset.as_u64());
+
+    // 🔹 Use global mapper + frame allocator (unsafe because of static mut)
+    let mut mapper_guard = MAPPER.lock();
+    let mapper = mapper_guard.as_mut().expect("MAPPER not initialized");
+
+    let mut fa_guard = FRAME_ALLOCATOR.lock();
+    let fa = fa_guard.as_mut().expect("FRAME_ALLOCATOR not initialized");
+    info!("Initializing Heap");
+    init_heap(mapper, fa).expect("init_heap failed");
+    info!("Heap initialized");
+
+    info!("Initializing GDT/TSS");
+    gdt::init();
+    info!("GDT/TSS Initialized");
+
+    info!("Disabling PIC");
+    disable_pic();
+    info!("PIC Disabled");
+
+    info!("Initializing IDT");
+    interrupts::init_idt();
+    info!("IDT Initialized");
+
+    info!("Mapping LAPIC MMIO");
+    map_lapic_mmio(mapper, fa);
+    info!("LAPIC MMIO mapped");
+
+    info!("Setting up APIC");
+    apic::setup_apic();
+    info!("APIC setup complete");
+
+    info!("Enabling Interrupts");
+    x86_64::instructions::interrupts::enable();
+    info!("Interrupts Enabled");
+
+
+    info!("kernel_init: completed");
+    Ok(())
+}
+
+
+
+
+
+ 
+/* 
 pub fn kernel_init(
     memory_regions: &'static [MemoryRegion],   // ← updated
     phys_mem_offset: VirtAddr,
@@ -275,6 +351,7 @@ pub fn kernel_init(
 
     Ok(())
 }
+*/
 
 /// Disable legacy PIC by masking all IRQs.
 pub fn disable_pic() {

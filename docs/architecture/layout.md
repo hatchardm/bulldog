@@ -17,7 +17,7 @@ It reflects the real behavior of the kernel and bootloader, not the future archi
 
 ---
 
-# 1. Overview
+## 1. Overview
 
 Bulldog uses a higher‑half kernel design with:
 
@@ -32,7 +32,7 @@ This layout is deterministic and optimized for debugging and contributor clarity
 
 ---
 
-# 2. Virtual Address Space (Current)
+## 2. Virtual Address Space (Current)
 
 ```
 0xFFFF_FFFF_FFFF_FFFF  ────────────────────────────────  Canonical high
@@ -61,7 +61,7 @@ This layout is deterministic and optimized for debugging and contributor clarity
 
 ---
 
-# 3. Kernel Virtual Regions
+## 3. Kernel Virtual Regions
 
 ### Kernel Text / Read‑Only Data
 
@@ -106,7 +106,7 @@ All stacks:
 
 ---
 
-# 4. Direct Physical Memory Map
+## 4. Direct Physical Memory Map
 
 The bootloader provides a physical‑to‑virtual offset:
 
@@ -128,7 +128,7 @@ Mapped as:
 
 ---
 
-# 5. LAPIC MMIO Region
+## 5. LAPIC MMIO Region
 
 Mapped at a fixed virtual address:
 
@@ -155,7 +155,7 @@ Used by:
 
 ---
 
-# 6. Physical Memory Layout (Current)
+## 6. Physical Memory Layout (Current)
 
 A typical bootloader memory map includes:
 
@@ -174,7 +174,7 @@ Bulldog uses:
 
 ---
 
-# 7. Reserved Regions (Current)
+## 7. Reserved Regions (Current)
 
 The following virtual regions are reserved but not yet used:
 
@@ -188,7 +188,7 @@ Guard pages are planned but not implemented.
 
 ---
 
-# 8. Future Layout Extensions
+## 8. Future Layout Extensions
 
 Planned but **not implemented**:
 
@@ -206,7 +206,7 @@ These will be documented once implemented.
 
 ---
 
-# 9. Contributor Notes
+## 9. Contributor Notes
 
 - This file describes the *current* layout, not the final design  
 - See `memory.md`, `gdt.md`, `apic.md`, and `kernel_init.md` for subsystem details  
@@ -216,6 +216,6 @@ These will be documented once implemented.
 
 ---
 
-# License
+## License
 
 MIT or Apache 2.0 — TBD.

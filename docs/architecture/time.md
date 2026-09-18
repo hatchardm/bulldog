@@ -1,219 +1,169 @@
-# Bulldog Kernel – Timekeeping Subsystem (Current Implementation)
+# Bulldog Kernel – Timekeeping and LAPIC Timer (Current Implementation)
 
-> **Disclaimer:**  
-> This document describes Bulldog’s *current* timekeeping subsystem exactly as implemented today.  
-> It does **not** include future plans such as calibrated timers, sleep APIs, scheduler integration,  
-> or high‑resolution timekeeping.  
->  
-> For related subsystems, see:  
-> - `timer.md` (LAPIC timer configuration)  
-> - `interrupts.md` (timer interrupt handler)  
-> - `kernel_init.md` (initialization sequence)
+This document describes Bulldog’s *current* timekeeping model.  
+It reflects the real behavior of:
 
-Bulldog’s time subsystem is intentionally minimal.  
-It provides a global tick counter incremented by the LAPIC timer interrupt, along with simple diagnostic helpers.
+- `time.rs` (tick counter)
+- `apic.rs` (LAPIC timer configuration)
+- `interrupts.rs` (LAPIC timer handler)
+- `kernel_init` (timer initialization sequence)
+
+Bulldog does **not** yet implement high‑resolution timers, RTC integration, wall‑clock time,
+or scheduler time slices. This document describes exactly what exists today.
 
 ---
 
-# 1. Overview
+## 1. Overview
 
-The time subsystem currently provides:
+Bulldog’s timekeeping is currently based on a **single global tick counter** incremented by
+the LAPIC timer interrupt.
 
-- A global 64‑bit tick counter  
-- A `tick()` function called on each LAPIC timer interrupt  
-- A periodic `health_check()` logger  
-- A stateful `Watchdog` for detecting stalled tick progression  
+Today, Bulldog provides:
 
-There is **no scheduler**, **no sleep API**, **no calibration**, and **no real timekeeping** yet.
+- A global tick counter (`tick_count`)
+- A `tick()` function called by the LAPIC timer interrupt
+- A periodic LAPIC timer configured during `setup_apic()`
+- A stable, deterministic tick frequency (fixed divisor + initial count)
+
+There is **no**:
+
+- Real‑time clock (RTC) integration  
+- HPET support  
+- TSC calibration  
+- Wall‑clock time  
+- Sleep queues  
+- Per‑process timers  
+- Scheduler time slices  
+
+These will be added later.
 
 ---
 
-# 2. Global Tick Counter
+## 2. Global Tick Counter
 
-The tick counter is defined as:
+`time.rs` defines:
 
 ```rust
-pub static TICKS: AtomicU64 = AtomicU64::new(0);
+static TICK_COUNT: AtomicU64 = AtomicU64::new(0);
+
+pub fn tick() {
+    TICK_COUNT.fetch_add(1, Ordering::SeqCst);
+}
+
+pub fn ticks() -> u64 {
+    TICK_COUNT.load(Ordering::SeqCst)
+}
 ```
 
-Properties:
+This counter increments once per LAPIC timer interrupt.
 
-- 64‑bit atomic integer  
-- Incremented once per LAPIC timer interrupt  
-- Represents an abstract “tick” unit  
-- Not tied to milliseconds or seconds  
+### Properties
+
+- Monotonic  
+- Global  
+- Atomic  
+- Not tied to real time  
 - Not calibrated  
 
-This counter is the foundation for future timekeeping and scheduling.
+Ticks are used for:
 
----
-
-# 3. Tick Function
-
-The LAPIC timer interrupt handler calls:
-
-```rust
-pub fn tick() {
-    TICKS.fetch_add(1, Ordering::Relaxed);
-}
-```
-
-Characteristics:
-
-- Uses `Relaxed` ordering (sufficient for a monotonic counter)  
-- Very fast — designed for use inside an interrupt handler  
-- No logging (to avoid log spam)  
-- No overflow handling (wraparound is acceptable for now)  
-
----
-
-# 4. Reading the Tick Counter
-
-The current tick count can be retrieved with:
-
-```rust
-pub fn get_ticks() -> u64 {
-    TICKS.load(Ordering::Relaxed)
-}
-```
-
-This is used by:
-
-- Diagnostics  
-- Health checks  
-- Watchdog logic  
+- Logging  
+- Basic timing tests  
 - Future scheduler integration  
 
 ---
 
-# 5. Health Check
+## 3. LAPIC Timer Configuration
 
-The `health_check()` function provides a simple “proof of life” mechanism:
+The LAPIC timer is configured in `setup_apic()`:
 
-```rust
-pub fn health_check(interval: u64) {
-    let t = get_ticks();
-    if t % interval == 0 {
-        info!("Health check: Kernel alive, ticks={}", t);
-    }
-}
-```
+- Divisor: `0b0011` (divide by 16)
+- Mode: `Periodic`
+- Initial count: `500_000`
+- Vector: `LAPIC_TIMER_VECTOR`
 
-Behavior:
+This produces a stable periodic interrupt rate on most hardware.
 
-- Logs once every `interval` ticks  
-- Useful during early bring‑up  
-- Confirms that timer interrupts are firing  
-- Confirms that logging is operational  
-
-This is not a watchdog — it is purely diagnostic.
-
----
-
-# 6. Watchdog
-
-The `Watchdog` struct provides a tick‑based stall detector:
+The LAPIC timer handler:
 
 ```rust
-pub struct Watchdog {
-    last_ticks: u64,
-    window: u64,
-    grace_left: u32,
-    consecutive_failures: u32,
-    failure_threshold: u32,
-}
-```
-
-### Purpose
-
-- Detects when the kernel stops making progress  
-- Useful for catching deadlocks or interrupt starvation  
-- Panics only after grace and failure thresholds are exceeded  
-
-### Operation
-
-```rust
-pub fn check(&mut self) {
-    let current = get_ticks();
-
-    if current < self.last_ticks + self.window {
-        return;
-    }
-
-    if current == self.last_ticks {
-        if self.grace_left > 0 {
-            self.grace_left -= 1;
-        } else {
-            self.consecutive_failures += 1;
-            if self.consecutive_failures >= self.failure_threshold {
-                panic!("Watchdog timeout: ticks stalled");
-            }
-        }
-    } else {
-        self.last_ticks = current;
-        self.consecutive_failures = 0;
-    }
-}
-```
-
-### Notes
-
-- The watchdog is **not** automatically invoked  
-- It must be driven manually by the kernel (e.g., from a future scheduler loop)  
-- It is safe to use even before SMP or user‑mode support  
-
----
-
-# 7. Integration With LAPIC Timer
-
-The LAPIC timer interrupt handler calls `tick()`:
-
-```rust
-extern "x86-interrupt" fn lapic_timer_handler(...) {
+extern "x86-interrupt" fn lapic_timer_handler(_stack_frame: InterruptStackFrame) {
     tick();
     send_eoi();
 }
 ```
 
-This ties the time subsystem directly to the LAPIC timer frequency.
-
-See `timer.md` for details.
+This is the only source of time progression in Bulldog today.
 
 ---
 
-# 8. Limitations (Current)
+## 4. Tick Frequency
 
-The time subsystem currently lacks:
+Bulldog does **not** currently calibrate the LAPIC timer.
 
-- Real timekeeping  
-- Tick calibration  
-- Tick‑to‑millisecond conversion  
-- Sleep/delay APIs  
-- Per‑CPU tick counters  
-- Scheduler integration  
-- High‑resolution timers  
-- TSC‑deadline mode  
+Tick frequency depends on:
 
-These will be added incrementally.
+- LAPIC bus clock  
+- Divisor (16)  
+- Initial count (500,000)  
 
----
+This means tick frequency varies between machines.
 
-# 9. Future Work
+Future work will introduce:
 
-Planned enhancements include:
-
-- LAPIC calibration using PIT or HPET  
-- Converting ticks to real time  
-- Per‑CPU tick counters for SMP  
-- Tickless idle  
-- High‑resolution timers  
-- Integration with a real scheduler  
-- Timeouts and sleep primitives  
-
-These features will be documented once implemented.
+- TSC calibration  
+- LAPIC timer calibration  
+- HPET fallback  
+- Deterministic tick rate  
 
 ---
 
-# License
+## 5. Planned Timekeeping Features
+
+Bulldog will eventually support:
+
+### High‑Resolution Time
+
+- TSC calibration  
+- Nanosecond resolution  
+- Monotonic clock  
+- Wall‑clock time via RTC  
+
+### Scheduler Integration
+
+- Time slices  
+- Sleep queues  
+- Timeouts  
+- Per‑process timers  
+
+### Kernel APIs
+
+- `sleep(ms)`  
+- `deadline()`  
+- `now()`  
+- `uptime()`  
+
+### Hardware Support
+
+- HPET  
+- ACPI PM timer  
+- APIC timer calibration  
+- Per‑CPU timers (SMP)
+
+None of these are implemented yet.
+
+---
+
+## 6. Contributor Notes
+
+- The tick counter is the only time source today  
+- LAPIC timer must be initialized before enabling interrupts  
+- Tick frequency is not calibrated — do not assume real‑time accuracy  
+- Timekeeping will expand significantly once syscalls and user‑mode are online  
+- Keep this document updated as new timing features are added  
+
+---
+
+## License
 
 MIT or Apache 2.0 — TBD.

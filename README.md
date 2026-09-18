@@ -1,24 +1,92 @@
-# Bulldog Kernel – SYSCALL Development Branch
+# Bulldog Kernel – Modern x86_64 Rust Kernel
 
 Bulldog is a custom operating system kernel written in Rust for the `x86_64-bulldog`
-architecture. It is built from scratch with a focus on safety, reliability, and architectural
-clarity. The project explores low-level OS concepts such as paging, interrupt handling,
-privilege switching, and syscall infrastructure.
+architecture. It is built from scratch with a focus on clarity, safety, architectural
+discipline, and contributor accessibility.
 
-This branch focuses on privilege switching, syscall development, and user ↔ kernel transitions.
+Bulldog explores low‑level OS concepts including:
+
+- Higher‑half kernel design  
+- Paging and memory management  
+- GDT/TSS initialization  
+- Interrupt handling and vector hygiene  
+- Privilege switching (Ring 3 ↔ Ring 0)  
+- Syscall interface and dispatcher  
+- Syscall harness and ABI validation  
+- Early user‑mode execution  
+- Planned VFS and ELF loader subsystems  
+
+This repository contains both the kernel source and the full documentation tree.
 
 ---
 
-## Branch Roadmap
+## Repository Structure
+
+```
+bulldog/
+│
+├── kernel/                 # Kernel source code
+│   ├── src/
+│   └── Cargo.toml
+│
+├── docs/
+│   ├── architecture/       # Hardware-facing subsystem documentation
+│   └── interface/          # User-facing kernel interface documentation
+│
+└── README.md               # This file
+```
+
+### Architecture Layer (`docs/architecture/`)
+Hardware‑facing subsystems:
+
+- Memory & paging  
+- GDT/TSS  
+- Interrupts & IDT  
+- APIC/LAPIC  
+- Kernel layout  
+- Boot & initialization  
+- Context switching (CPU-level)  
+
+### Interface Layer (`docs/interface/`)
+User‑mode boundary and kernel interface:
+
+- Syscall ABI  
+- Syscall table  
+- Syscall dispatcher  
+- Syscall harness  
+- VFS design (planned)  
+- ELF loader (planned)  
+- Process model (interface-level)  
+- Privilege switching (user ↔ kernel transitions)
+
+This separation keeps Bulldog contributor‑friendly and easy to navigate.
+
+---
+
+## Current Development Branch
+
+The active milestone branch is:
+
+```
+feature/kernel-init-rebuild
+```
+
+This branch focuses on:
+
+- Rebuilding kernel initialization  
+- Cleaning subsystem boundaries  
+- Rewriting text/console and framebuffer integration  
+- Validating syscall entry/exit paths  
+- Preparing for user‑mode execution  
+- Establishing the interface documentation tree  
+
+Previous milestone branches:
 
 ```
 main                → Latest stable kernel build (APIC baseline)
-│
-├── feature/pic8259 → Legacy PIC interrupt controller
-│
-├── feature/apic    → APIC milestone (paging, LAPIC timer, vector hygiene)
-│
-└── feature/syscall → Privilege switching + syscall infrastructure
+feature/pic8259     → Legacy PIC baseline
+feature/apic        → APIC + LAPIC timer milestone
+feature/syscall     → Privilege switching + syscall infrastructure
 ```
 
 ---
@@ -27,13 +95,13 @@ main                → Latest stable kernel build (APIC baseline)
 
 ### Prerequisites
 
-To build Bulldog, you will need:
+You will need:
 
-- A nightly Rust compiler  
-- The `llvm-tools-preview` component  
+- Nightly Rust toolchain  
+- `llvm-tools-preview` component  
 - QEMU (recommended) or real hardware with APIC support  
 
-Install the required Rust component:
+Install required Rust components:
 
 ```bash
 rustup component add llvm-tools-preview
@@ -68,103 +136,52 @@ qemu-system-x86_64 \
 
 ---
 
-## Compatibility Notes
+## Syscall Interface Overview
 
-### loc_api Nightly Feature Fix
+Bulldog implements a simple, stable syscall ABI:
 
-If you encounter a build error in `loc_api` related to the deprecated `const_fn` feature:
+| Number | Name   | Handler Function           | Notes |
+|--------|--------|----------------------------|-------|
+| 1      | write  | `sys_write`                | FD write |
+| 2      | exit   | `sys_exit_trampoline`      | Process exit |
+| 3      | open   | `sys_open`                 | Returns FD |
+| 4      | read   | `sys_read`                 | FD read |
+| 5      | alloc  | `sys_alloc_trampoline`     | Allocates memory |
+| 6      | free   | `sys_free_trampoline`      | Frees memory |
+| 7      | close  | `sys_close_trampoline`     | Closes FD |
 
-```rust
-#![cfg_attr(feature = "nightly", feature(const_fn))]
-```
+See:
 
-Replace it with:
-
-```rust
-#![cfg_attr(feature = "nightly", feature(const_fn_trait_bound))]
-```
-
-Apply this fix at line 91 of `loc_api/lib.rs`.  
-Ensure your `Cargo.toml` enables the nightly feature.
-
----
-
-## Syscall Development Overview
-
-## Architecture Documentation
-
-For detailed subsystem documentation, see:
-
-- docs/architecture/README.md – Architecture index  
-- docs/privilege-switching.md – Ring 0 ↔ Ring 3 transitions  
-- docs/syscall.md – Syscall development guide  
-- docs/syscall-table.md – Syscall numbering and table  
-- docs/syscall-harness-guide.md – Syscall test harness  
-
-
-This branch introduces:
-
-- Privilege switching  
-  - Ring 0 ↔ Ring 3 transitions via GDT/TSS  
-  - Proper stack switching on interrupts and exceptions  
-
-- Syscall infrastructure  
-  - Initial syscall table and dispatcher  
-  - Example syscalls for testing  
-
-- Contributor visibility  
-  - Logging of syscall entry, arguments, and return values  
-  - Minimal user ↔ kernel test harness  
-
-See the following documents for details:
-
-- `docs/syscall.md` – Syscall development guide  
-- `docs/privilege-switching.md` – Privilege switching mechanics  
-- `docs/syscall-table.md` – Syscall table and numbering  
-- `docs/syscall-harness-guide.md` – Syscall test harness  
-
----
-
-## Current Syscalls
-
-| Number | Name       | Status        | Notes                          |
-|--------|------------|---------------|--------------------------------|
-| 1      | sys_write  | Implemented   | Writes buffer to fd            |
-| 2      | sys_exit   | Implemented   | Terminates process             |
-| 3      | sys_open   | Implemented   | Opens file descriptor          |
-| 4      | sys_read   | Stub example  | Reads buffer (to be implemented) |
-
-See `docs/syscall-table.md` for details on adding new syscalls.
+- `docs/interface/syscall.md`  
+- `docs/interface/syscall-table.md`  
+- `docs/interface/syscall-harness-guide.md`  
+- `docs/interface/dispatcher.md`
 
 ---
 
 ## Roadmap
 
-- Paging and memory management  
-- Interrupt handling and IST setup  
-- GDT/TSS initialization  
-- APIC interrupt controller integration  
-- Privilege switching  
-- Syscall interface and dispatcher  
-- Process scheduling  
-- User mode execution  
+### Near-Term
+- Finalize kernel init rebuild  
+- Validate syscall entry/exit paths  
+- Establish minimal user‑mode execution  
+- Implement ELF loader  
+- Implement basic VFS (ramfs/devfs)
 
----
+### Mid-Term
+- Cooperative scheduler  
+- Preemptive scheduling via LAPIC timer  
+- Process creation syscalls  
+- FD table integration with VFS  
+- User-mode heap allocator
 
-## Branching Strategy
-
-Bulldog’s development is organized around feature branches that represent major architectural
-milestones:
-
-| Branch          | Purpose / Stage                                |
-|-----------------|-------------------------------------------------|
-| main            | Latest integrated kernel (APIC baseline)        |
-| feature/pic8259 | Legacy PIC interrupt controller                 |
-| feature/apic    | LAPIC/APIC interrupt controller development     |
-| feature/syscall | Privilege switching + syscall infrastructure    |
-
-New features should be developed in a dedicated `feature/*` branch and merged into `main`
-once complete.
+### Long-Term
+- Signals  
+- IPC  
+- Multi-threading  
+- Multi-CPU load balancing  
+- ext2/ext4 filesystem support  
+- Dynamic linker / shared libraries
 
 ---
 
@@ -179,27 +196,23 @@ development, Rust internals, or low-level architecture are welcome.
 - Document unsafe blocks with justification  
 - Test under QEMU before submitting pull requests  
 - Align contributions with roadmap milestones  
-- Ensure all syscalls log entry, arguments, and return values  
-- Update `docs/syscall.md` and `docs/syscall-table.md` when adding new syscalls  
-
-Additional contributor guidelines will be expanded as the project evolves.
+- Update relevant documentation in `docs/architecture/` or `docs/interface/`  
+- Ensure syscall harness tests remain deterministic  
 
 ---
 
 ## License
 
-MIT or Apache 2.0 — to be determined. Contributions are welcome under either license.
+MIT or Apache 2.0 — to be determined.
 
 ---
 
 ## Disclaimer
 
-Bulldog and its subsystems (syscalls, APIC, PIC8259, paging, and related features) are
-experimental and provided “as is” without warranty of any kind. They are intended for
-research, learning, and contributor experimentation. Running Bulldog on real hardware may
-expose quirks or limitations. Use at your own risk. By contributing or running Bulldog, you
-agree to abide by the project license.
-
+Bulldog and its subsystems (paging, interrupts, APIC, syscalls, VFS, ELF loader, and related
+features) are experimental and provided “as is” without warranty of any kind. They are
+intended for research, learning, and contributor experimentation. Running Bulldog on real
+hardware may expose quirks or limitations. Use at your own risk.
 
 
 

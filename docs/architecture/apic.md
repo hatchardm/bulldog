@@ -11,7 +11,7 @@ The I/O APIC (IOAPIC), full vector layout, and SMP features are **not yet implem
 
 ---
 
-# 1. Overview
+## 1. Overview
 
 Bulldog uses the Local APIC (LAPIC) for:
 
@@ -26,7 +26,7 @@ The IOAPIC, detailed vector layout, and SMP IPIs are part of the planned design 
 
 ---
 
-# 2. LAPIC MMIO Mapping
+## 2. LAPIC MMIO Mapping
 
 The LAPIC is memory‑mapped into higher‑half kernel space at a fixed virtual address:
 
@@ -54,7 +54,7 @@ These wrap volatile MMIO loads/stores at `LAPIC_VIRT_BASE + offset`.
 
 ---
 
-# 3. LAPIC Registers and Timer Modes
+## 3. LAPIC Registers and Timer Modes
 
 `apic.rs` defines a subset of LAPIC registers:
 
@@ -86,7 +86,7 @@ In the current implementation, only **periodic** mode is used.
 
 ---
 
-# 4. LAPIC Initialization (setup_apic)
+## 4. LAPIC Initialization (`setup_apic`)
 
 `setup_apic()` performs LAPIC bring‑up and timer configuration:
 
@@ -117,7 +117,7 @@ The LAPIC timer uses a dedicated vector `LAPIC_TIMER_VECTOR` defined in the inte
 
 ---
 
-# 5. EOI Handling
+## 5. EOI Handling
 
 After handling a LAPIC‑delivered interrupt, the kernel must signal completion via EOI:
 
@@ -131,7 +131,7 @@ Every interrupt handler that is serviced via the LAPIC (e.g., the LAPIC timer) i
 
 ---
 
-# 6. APIC ID and CPUID Integration
+## 6. APIC ID and CPUID Integration
 
 `apic.rs` provides helpers for APIC identity and MSR access:
 
@@ -147,7 +147,7 @@ This aids debugging of APIC configuration and, in the future, SMP bring‑up.
 
 ---
 
-# 7. Interaction With Other Subsystems
+## 7. Interaction With Other Subsystems
 
 ### GDT/TSS and IST Stacks
 
@@ -171,7 +171,7 @@ This ensures LAPIC‑delivered interrupts run on a known‑good stack, improving
 
 ---
 
-# 8. Future Work
+## 8. Future Work
 
 Planned APIC‑related features include:
 
@@ -186,7 +186,7 @@ These features are part of Bulldog’s design goals but are **not implemented ye
 
 ---
 
-# 9. Contributor Notes
+## 9. Contributor Notes
 
 - Ensure `map_lapic_mmio()` is called before `setup_apic()`  
 - Do not change `LAPIC_VIRT_BASE` without updating memory mapping and documentation  
@@ -196,6 +196,7 @@ These features are part of Bulldog’s design goals but are **not implemented ye
 
 ---
 
-# License
+## License
 
 MIT or Apache 2.0 — TBD.
+

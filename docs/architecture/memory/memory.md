@@ -1,4 +1,3 @@
-Got you, Mark — here is the entire rewritten memory.md in a single raw code block, with no formatting broken, ready for direct paste into your repo.
 # Bulldog Kernel – Memory Management (Current Implementation)
 
 This document describes Bulldog’s *actual* memory management implementation as of the current kernel state. It reflects the real behavior of:
@@ -12,7 +11,7 @@ This is not a future design document — it is a precise description of how Bull
 
 ---
 
-# 1. Overview
+## 1. Overview
 
 Bulldog currently implements:
 
@@ -28,7 +27,7 @@ User‑mode memory, guard pages, and advanced allocators are **not yet implement
 
 ---
 
-# 2. Virtual Address Layout (Current)
+## 2. Virtual Address Layout (Current)
 
 Bulldog uses a higher‑half kernel model. The bootloader provides a physical‑to‑virtual offset that is used to access page tables and physical memory.
 
@@ -57,7 +56,7 @@ Bulldog uses a higher‑half kernel model. The bootloader provides a physical‑
 
 ---
 
-# 3. Paging Infrastructure
+## 3. Paging Infrastructure
 
 Bulldog uses the standard x86_64 4‑level paging model.
 
@@ -78,7 +77,7 @@ Large pages are **not** used yet.
 
 ---
 
-# 4. LAPIC MMIO Mapping
+## 4. LAPIC MMIO Mapping
 
 The Local APIC is mapped into higher‑half kernel space at:
 
@@ -103,13 +102,13 @@ This mapping is required before calling `setup_apic()`.
 
 ---
 
-# 5. Physical Memory Management
+## 5. Physical Memory Management
 
 Bulldog currently uses **two allocators** depending on boot stage.
 
 ---
 
-## 5.1 Pre‑Heap Allocator
+### 5.1 Pre‑Heap Allocator
 
 `PreHeapAllocator` provides up to **512 frames** during early boot.
 
@@ -121,18 +120,18 @@ This allocator is simple and deterministic.
 
 ---
 
-## 5.2 BootInfoFrameAllocator
+### 5.2 BootInfoFrameAllocator
 
 After the heap is available, Bulldog switches to `BootInfoFrameAllocator`.
 
-### Features implemented today
+#### Features implemented today
 
 - Stores all discovered frames in a `Vec<PhysFrame>`
 - Tracks allocated frames using a bitmap (`FrameBitmap`)
 - Provides `allocate_frame()` for 4 KiB frames
 - Provides `mark_used_frames()` to mark non‑usable regions
 
-### Bitmap Details
+#### Bitmap Details
 
 `FrameBitmap`:
 
@@ -146,7 +145,7 @@ This is a partial implementation of a future full bitmap allocator.
 
 ---
 
-# 6. Interrupt Stacks (IST) and TSS
+## 6. Interrupt Stacks (IST) and TSS
 
 `gdt.rs` defines a TSS with **two dedicated IST stacks**:
 
@@ -178,7 +177,7 @@ The GDT contains:
 
 ---
 
-# 7. Kernel Initialization Flow (Current)
+## 7. Kernel Initialization Flow (Current)
 
 The actual initialization sequence is:
 
@@ -195,7 +194,7 @@ This sequence reflects the real code paths in `lib.rs`, `memory.rs`, `gdt.rs`, a
 
 ---
 
-# 8. Missing or Future Features
+## 8. Missing or Future Features
 
 These features are mentioned in earlier design notes but **not yet implemented**:
 
@@ -213,7 +212,7 @@ These will be added after syscalls and privilege switching are complete.
 
 ---
 
-# 9. Contributor Notes
+## 9. Contributor Notes
 
 - The memory subsystem is evolving; this document reflects the current state.  
 - LAPIC mapping must occur before enabling the LAPIC timer.  
@@ -224,6 +223,7 @@ These will be added after syscalls and privilege switching are complete.
 
 ---
 
-# License
+## License
 
 MIT or Apache 2.0 — TBD.
+

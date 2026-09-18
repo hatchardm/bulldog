@@ -1,191 +1,176 @@
-# Bulldog Kernel – Kernel and IST Stacks (Current Implementation)
+# Bulldog Kernel – Kernel Stacks and IST Stacks (Current Implementation)
 
-> **Disclaimer:**  
-> This document describes Bulldog’s *current* stack implementation as it exists in the code today.  
-> It does **not** cover future plans such as guard pages, per‑CPU stacks, user‑mode stacks,  
-> or scheduler‑managed kernel stacks.  
->  
-> For related subsystems, see:  
-> - `gdt.md` (TSS and IST configuration)  
-> - `interrupts.md` (exception and LAPIC timer handlers)  
-> - `kernel_init.md` (stack mapping and initialization)  
-> - `apic.md` (LAPIC timer integration)
+This document describes Bulldog’s *current* kernel stack architecture, including the main
+kernel stack, interrupt stacks (IST), and how they integrate with the GDT/TSS subsystem.
+It reflects the real behavior of:
 
-Bulldog currently uses two statically allocated, higher‑half kernel stacks for critical interrupt handling.  
-These stacks are used exclusively through the Interrupt Stack Table (IST) mechanism in the TSS.
+- `stack.rs` (static stack allocations)
+- `gdt.rs` (TSS + IST configuration)
+- `interrupts.rs` (IST‑backed handlers)
+- `apic.rs` (LAPIC timer using IST1)
+
+This is not a future design document — it describes exactly how Bulldog works today.
 
 ---
 
-# 1. Overview
+## 1. Overview
 
-Bulldog defines two dedicated stacks:
+Bulldog uses three types of stacks:
 
-1. **Double Fault Stack**  
-   - Used only for the double‑fault exception  
-   - Lives in its own linker section (`.stack`)  
-   - Exposed via `no_mangle` for TSS setup  
-   - 16‑byte aligned  
+1. **Main kernel stack**  
+2. **IST0 – Double‑fault stack**  
+3. **IST1 – LAPIC timer + page‑fault stack**
 
-2. **LAPIC IST Stack**  
-   - Used for LAPIC timer interrupts  
-   - Used for page‑fault exceptions  
-   - Separate from the double‑fault stack  
-   - 16‑byte aligned  
+All stacks are:
 
-These stacks ensure that critical exceptions and timer interrupts execute on known‑good memory, even if the main kernel stack is corrupted.
+- Statically allocated  
+- 128 KiB in size  
+- 16‑byte aligned  
+- Located in higher‑half kernel space  
+- Mapped with `PRESENT | WRITABLE`  
+- Without guard pages (yet)
 
----
-
-# 2. Stack Structures
-
-## 2.1 AlignedStack (Double Fault Stack)
-
-```rust
-#[repr(align(16))]
-pub struct AlignedStack(pub [u8; STACK_SIZE]);
-```
-
-Properties:
-
-- 16‑byte alignment (required by the x86‑64 ABI)
-- Backing storage: `[u8; STACK_SIZE]`
-- Used exclusively for the double‑fault IST entry
-
-The global instance:
-
-```rust
-#[unsafe(link_section = ".stack")]
-#[unsafe(no_mangle)]
-pub static mut STACK: AlignedStack = AlignedStack([0; STACK_SIZE]);
-```
-
-### Why a dedicated section?
-
-Placing the stack in `.stack` ensures:
-
-- The linker can place it at a stable, predictable virtual address  
-- The TSS can reference it directly  
-- It is isolated from other kernel data  
-
-### Stack start address
-
-```rust
-pub fn get_stack_start() -> VirtAddr {
-    unsafe { VirtAddr::from_ptr(core::ptr::addr_of!(STACK.0)) }
-}
-```
-
-This returns the *base* of the stack region; the TSS uses the *end* of the region as the initial RSP.
+These stacks are defined in `stack.rs` and wired into the TSS in `gdt.rs`.
 
 ---
 
-# 3. LAPIC IST Stack
+## 2. Static Stack Definitions
 
-The LAPIC IST stack is used for:
-
-- LAPIC timer interrupts  
-- Page‑fault exceptions  
-
-Both handlers are configured in the IDT to use `LAPIC_IST_INDEX`.
-
-Definition:
+`stack.rs` defines two static stack regions:
 
 ```rust
 #[repr(align(16))]
 pub struct Stack(pub [u8; STACK_SIZE]);
 
-pub static LAPIC_STACK: Stack = Stack([0; STACK_SIZE]);
+pub const STACK_SIZE: usize = 128 * 1024;
+
+pub static STACK: Stack = Stack([0; STACK_SIZE]);        // IST0 – double fault
+pub static LAPIC_STACK: Stack = Stack([0; STACK_SIZE]);  // IST1 – LAPIC timer + page fault
 ```
 
-Properties:
-
-- 16‑byte aligned  
-- Statically allocated  
-- Not placed in a special linker section  
-- Mapped and protected during `kernel_init`  
-
-### Why a separate stack?
-
-Separating the LAPIC/page‑fault stack from the double‑fault stack:
-
-- Prevents timer interrupts from consuming the double‑fault stack  
-- Ensures page‑fault handlers run on clean memory  
-- Provides isolation between failure contexts  
+These are placed in higher‑half memory by the linker.
 
 ---
 
-# 4. Stack Size and Alignment
+## 3. IST Stack Usage
 
-`STACK_SIZE` is defined in `gdt.rs` and currently set to:
+Bulldog uses two IST entries:
 
-- **128 KiB per stack**
+| IST Index | Purpose | Backing Stack |
+|-----------|---------|---------------|
+| **0** | Double fault | `STACK` |
+| **1** | LAPIC timer + page fault | `LAPIC_STACK` |
 
-This size is chosen to:
+### IST0 – Double Fault
 
-- Provide ample space for nested exceptions  
-- Avoid early stack exhaustion during debugging  
-- Keep memory usage predictable  
+Used exclusively for double‑fault exceptions.
 
-All stacks are:
+A dedicated stack is required because double faults often occur due to:
 
-- **16‑byte aligned** (required by System V ABI)  
-- **Statically allocated**  
-- **Zero‑initialized**  
+- Stack corruption  
+- Page‑fault recursion  
+- Invalid kernel stack pointer  
+
+IST0 ensures the CPU has a clean stack to panic safely.
+
+### IST1 – LAPIC Timer + Page Fault
+
+Used for:
+
+- LAPIC timer interrupts  
+- Page faults  
+
+This prevents:
+
+- Timer interrupts from running on a corrupted kernel stack  
+- Page faults from reusing the same stack that triggered the fault  
+
+IST1 dramatically improves robustness.
 
 ---
 
-# 5. Integration With GDT and TSS
+## 4. TSS Integration
 
-The stacks are wired into the TSS in `gdt.rs`:
+`gdt.rs` installs the IST stacks into the TSS:
 
-- `DOUBLE_FAULT_IST_INDEX` → `STACK`  
-- `LAPIC_IST_INDEX` → `LAPIC_STACK`  
+```rust
+tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX] = df_stack_end;
+tss.interrupt_stack_table[LAPIC_IST_INDEX] = lapic_stack_end;
+```
+
+The TSS is then loaded via:
+
+```rust
+load_tss(selectors.tss_selector);
+```
+
+This must occur **before enabling interrupts**.
+
+---
+
+## 5. Stack Mapping and Frame Marking
+
+During `kernel_init`, Bulldog:
+
+1. Computes the virtual range of each IST stack  
+2. Marks all frames backing the stack as “used” in the bitmap allocator  
+3. Remaps each page with correct flags  
+4. Flushes TLB entries  
 
 This ensures:
 
-- Double faults always run on a pristine, isolated stack  
-- LAPIC timer and page‑fault handlers run on a stable stack even if the main kernel stack is corrupted  
+- IST stacks are fully mapped  
+- No stack pages are reused  
+- LAPIC timer and page‑fault handlers have safe stacks  
+
+This is one of Bulldog’s strongest reliability features.
 
 ---
 
-# 6. Integration With kernel_init
+## 6. Main Kernel Stack
 
-`kernel_init` performs additional setup:
+The main kernel stack is provided by the bootloader and used for:
 
-- Maps the LAPIC IST stack pages  
-- Marks their frames as used in the frame allocator  
-- Remaps them with correct flags (`PRESENT | WRITABLE`)  
-- Logs the virtual range for debugging  
+- Kernel entry  
+- `kernel_main`  
+- `kernel_init`  
+- Normal kernel execution  
 
-This ensures the LAPIC IST stack is fully backed by physical memory before interrupts are enabled.
+It is **not** an IST stack.
+
+Future work will introduce:
+
+- Per‑CPU kernel stacks  
+- Guard pages  
+- Stack overflow detection  
 
 ---
 
-# 7. Future Work
+## 7. Future Improvements
 
-Planned improvements include:
+Planned enhancements:
 
-- Guard pages below each stack  
-- Per‑CPU kernel stacks (for SMP)  
+- Guard pages around all stacks  
+- Per‑CPU kernel stacks (SMP)  
 - Per‑CPU IST stacks  
-- User‑mode stacks and privilege switching  
-- Dynamic stack allocation for threads/processes  
-- Stack canaries and overflow detection  
-
-These will be documented once implemented.
-
----
-
-# 8. Contributor Notes
-
-- Do not modify stack sizes without updating `gdt.rs` and `kernel_init.md`  
-- All IST stacks must remain 16‑byte aligned  
-- Avoid placing additional data in `.stack`  
-- When adding new IST entries, document them here and in `gdt.md`  
-- Keep stack usage minimal inside interrupt handlers  
+- Dedicated syscall entry stack (IST2)  
+- Stack canaries  
+- Red‑zone support  
+- Better stack layout documentation  
 
 ---
 
-# License
+## 8. Contributor Notes
+
+- IST stacks must remain aligned and unmoved  
+- Do not change stack sizes without updating `gdt.rs` and `kernel_init.md`  
+- LAPIC timer and page‑fault handlers depend on IST1  
+- Double‑fault handler depends on IST0  
+- Guard pages are not implemented yet — do not assume their presence  
+
+---
+
+## License
 
 MIT or Apache 2.0 — TBD.
+

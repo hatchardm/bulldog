@@ -12,6 +12,17 @@ use x86_64::{
     },
 };
 
+use core::cell::OnceCell;
+use spin::Mutex;
+
+pub static MAPPER: Mutex<Option<OffsetPageTable<'static>>> = Mutex::new(None);
+pub static FRAME_ALLOCATOR: Mutex<Option<BulldogFrameAllocator>> = Mutex::new(None);
+
+
+
+
+
+
 
 
 fn new_offset_page_table<'a>(
@@ -31,24 +42,6 @@ fn new_offset_page_table<'a>(
 }
 
 
-
-
-/* 
-fn new_offset_page_table<'a>(
-    phys_offset_va: VirtAddr,
-    fa: &mut BulldogFrameAllocator,
-) -> (OffsetPageTable<'a>, PhysFrame<Size4KiB>) {
-    let pml4_frame = fa.allocate_frame().expect("no frame for PML4");
-    let pml4_virt = phys_offset_va + pml4_frame.start_address().as_u64();
-
-    let pml4_table: &mut PageTable = unsafe { &mut *(pml4_virt.as_mut_ptr()) };
-    pml4_table.zero();
-
-    let mapper = unsafe { OffsetPageTable::new(pml4_table, phys_offset_va) };
-    (mapper, pml4_frame)
-}
-
-*/
 
 pub struct BulldogFrameAllocator {
     next: PhysAddr,
@@ -118,12 +111,22 @@ pub unsafe fn init(boot_info: &mut BootInfo) {
     let phys_offset = boot_info.physical_memory_offset;
     let phys_offset_va = VirtAddr::new(phys_offset);
 
-    let mut fa = BulldogFrameAllocator::new(boot_info);
-    let mut mapper = new_offset_page_table(phys_offset_va);
+    let fa = BulldogFrameAllocator::new(boot_info);
+    let mapper = new_offset_page_table(phys_offset_va);
 
-    // 🔹 2.5) Drop the kernel identity map entirely — bootloader already did 0..512 MiB
+    // store globals
+    FRAME_ALLOCATOR.lock().replace(fa);
+    MAPPER.lock().replace(mapper);
 
-    // 🔹 HHDM map only regions above the bootloader’s huge-page range
+
+    // use mutable refs from the globals
+    let mut fa_guard = FRAME_ALLOCATOR.lock();
+    let fa = fa_guard.as_mut().expect("FRAME_ALLOCATOR not set");
+
+    let mut mapper_guard = MAPPER.lock();
+    let mapper = mapper_guard.as_mut().expect("MAPPER not set");
+
+
     const BOOT_IDENTITY_LIMIT: u64 = 512 * 1024 * 1024;
 
     for i in 0..boot_info.memory_region_count {
@@ -136,7 +139,6 @@ pub unsafe fn init(boot_info: &mut BootInfo) {
         let end = PhysAddr::new(region.end);
 
         while start < end {
-            // skip frames already covered by bootloader huge pages
             if start.as_u64() < BOOT_IDENTITY_LIMIT {
                 start += Size4KiB::SIZE;
                 continue;
@@ -148,18 +150,16 @@ pub unsafe fn init(boot_info: &mut BootInfo) {
 
             let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 
-            unsafe {
-                mapper
-                    .map_to(page, frame, flags, &mut fa)
-                    .expect("map_to HHDM")
-                    .flush();
-            }
+            mapper
+                .map_to(page, frame, flags, fa)
+                .expect("map_to HHDM")
+                .flush();
 
             start += Size4KiB::SIZE;
         }
     }
 
-    // 🔹 Framebuffer mapping (now safely above 512 MiB)
+    // framebuffer mapping: same change, use `fa` not `&mut fa`
     if boot_info.framebuffer_present != 0 {
         let fb = &boot_info.framebuffer;
         let fb_start = PhysAddr::new(fb.addr);
@@ -174,12 +174,10 @@ pub unsafe fn init(boot_info: &mut BootInfo) {
 
             let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 
-            unsafe {
-                mapper
-                    .map_to(page, frame, flags, &mut fa)
-                    .expect("map_to framebuffer")
-                    .flush();
-            }
+            mapper
+                .map_to(page, frame, flags, fa)
+                .expect("map_to framebuffer")
+                .flush();
 
             cur += Size4KiB::SIZE;
         }
@@ -187,4 +185,5 @@ pub unsafe fn init(boot_info: &mut BootInfo) {
         boot_info.framebuffer_virt = (phys_offset_va + fb.addr).as_u64();
     }
 }
+
 

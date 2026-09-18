@@ -1,9 +1,8 @@
-# Bulldog Kernel – Linker Script and ELF Layout
+# Bulldog Kernel – Linker Script and ELF Layout (Current Implementation)
 
 This document describes Bulldog’s kernel ELF layout, linker script structure, section
-placement, and higher‑half virtual address mapping. It provides contributors with a clear
-understanding of how the kernel binary is organized in memory and how the linker ensures
-correct placement of code, data, and metadata.
+placement, and higher‑half virtual address mapping. It reflects the **current** behavior of
+Bulldog’s linker script and how the kernel binary is organized in memory.
 
 Bulldog targets the `x86_64-bulldog` architecture and uses a higher‑half linking strategy
 that maps the kernel into the upper canonical half of the virtual address space.
@@ -29,7 +28,7 @@ The linker script is a critical part of the kernel’s boot and memory architect
 
 Bulldog is linked to run at a virtual address above:
 
-```
+```text
 0xFFFF_8000_0000_0000
 ```
 
@@ -49,7 +48,7 @@ virtually** in the higher half.
 
 The bootloader loads the kernel ELF into a physical region such as:
 
-```
+```text
 0x0010_0000  (1 MiB)
 ```
 
@@ -71,7 +70,7 @@ The linker script ensures that:
 
 The linker defines the following virtual layout:
 
-```
+```text
 KERNEL_BASE = 0xFFFF_8000_0000_0000
 
 .text   → KERNEL_BASE + 0x0000_0000
@@ -100,8 +99,6 @@ Mapped as:
 - Read‑only  
 - Executable  
 
----
-
 ### `.rodata`
 
 Contains:
@@ -115,8 +112,6 @@ Mapped as:
 - Read‑only  
 - Non‑executable  
 
----
-
 ### `.data`
 
 Contains:
@@ -128,8 +123,6 @@ Mapped as:
 
 - Read/write  
 - Non‑executable  
-
----
 
 ### `.bss`
 
@@ -144,9 +137,9 @@ The kernel entry point zeroes this region before enabling interrupts.
 
 ## Linker‑Defined Symbols
 
-The linker script exports symbols used by the kernel:
+The linker script exports symbols used by the kernel, such as:
 
-```
+```text
 _start
 _etext
 _sdata
@@ -171,7 +164,6 @@ These symbols are used for:
 Bulldog enforces:
 
 - 4 KiB alignment for all sections  
-- 2 MiB alignment for large kernel regions (future)  
 - 16‑byte alignment for stack frames  
 - Page alignment for direct‑map regions  
 
@@ -181,7 +173,7 @@ This ensures compatibility with paging and simplifies debugging.
 
 ## Program Headers
 
-The kernel ELF contains:
+The kernel ELF typically contains:
 
 - One loadable segment for `.text` and `.rodata`  
 - One loadable segment for `.data` and `.bss`  
@@ -197,17 +189,18 @@ Paging maps these virtual addresses to physical memory.
 
 Example mapping:
 
-```
+```text
 virt: 0xFFFF_8000_0000_0000  → phys: 0x0010_0000
 virt: 0xFFFF_8000_0020_0000  → phys: 0x0030_0000
 ```
 
 The bootloader or early kernel code installs these mappings before jumping to the higher‑half entry point.
 
-See:  
-`boot.md`  
-`memory.md`  
-`layout.md`
+See also:
+
+- `boot.md`  
+- `memory.md`  
+- `layout.md`
 
 ---
 

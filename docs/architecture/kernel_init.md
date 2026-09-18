@@ -4,16 +4,16 @@ This document describes Bulldog’s *current* kernel initialization sequence as 
 
 - `memory.rs` (paging, allocators, LAPIC MMIO mapping)
 - `gdt.rs` and `stack.rs` (GDT, TSS, IST stacks)
-- `interrupts` (IDT and LAPIC timer vector)
+- `interrupts.rs` (IDT and LAPIC timer vector)
 - `syscall` subsystem (syscall entry setup)
 - `allocator` (kernel heap)
 - `apic.rs` (LAPIC initialization)
 
-This is a description of the *current implementation*, not future user‑mode or SMP plans.
+This is a description of the **current implementation**, not future user‑mode or SMP plans.
 
 ---
 
-# 1. Purpose of `kernel_init`
+## 1. Purpose of `kernel_init`
 
 `kernel_init` is the central bootstrap routine executed after the bootloader hands control to the kernel. It is responsible for:
 
@@ -29,7 +29,7 @@ Once `kernel_init` completes, the kernel is fully operational and ready to handl
 
 ---
 
-# 2. High‑Level Initialization Order
+## 2. High‑Level Initialization Order
 
 The real initialization sequence is:
 
@@ -55,7 +55,7 @@ This sequence reflects the exact order in the source code.
 
 ---
 
-# 3. Paging and Mapper Initialization
+## 3. Paging and Mapper Initialization
 
 The kernel begins by creating the paging mapper:
 
@@ -69,7 +69,7 @@ Memory regions from the bootloader are logged for debugging.
 
 ---
 
-# 4. Temporary Pre‑Heap Frame Allocator
+## 4. Temporary Pre‑Heap Frame Allocator
 
 Before the heap exists, Bulldog uses a temporary allocator:
 
@@ -86,7 +86,7 @@ This allocator:
 
 ---
 
-# 5. Kernel Heap Initialization
+## 5. Kernel Heap Initialization
 
 The heap is initialized using the temporary allocator:
 
@@ -104,7 +104,7 @@ init_fd_table_with_std();
 
 ---
 
-# 6. Final Frame Allocator
+## 6. Final Frame Allocator
 
 After the heap is available, the kernel constructs the full bitmap‑based frame allocator:
 
@@ -121,7 +121,7 @@ This allocator:
 
 ---
 
-# 7. Logging Virtual Memory Regions
+## 7. Logging Virtual Memory Regions
 
 The kernel logs each memory region again, this time with its virtual address computed via:
 
@@ -133,7 +133,7 @@ This helps verify the direct physical map.
 
 ---
 
-# 8. CPU Tables: GDT and IDT
+## 8. CPU Tables: GDT and IDT
 
 The kernel initializes:
 
@@ -149,7 +149,7 @@ This must occur before enabling interrupts or LAPIC timers.
 
 ---
 
-# 9. Syscall Initialization
+## 9. Syscall Initialization
 
 The syscall entry point is registered:
 
@@ -163,7 +163,7 @@ If the `syscall_tests` feature is enabled, the syscall harness runs here.
 
 ---
 
-# 10. LAPIC MMIO Mapping
+## 10. LAPIC MMIO Mapping
 
 The LAPIC MMIO region is mapped into higher‑half kernel space:
 
@@ -180,7 +180,7 @@ The LAPIC cannot be accessed until this mapping exists.
 
 ---
 
-# 11. LAPIC IST Stack Mapping
+## 11. LAPIC IST Stack Mapping
 
 The LAPIC timer and page‑fault handlers run on IST1, backed by `LAPIC_STACK`.
 
@@ -201,7 +201,7 @@ This is a unique part of Bulldog’s initialization pipeline.
 
 ---
 
-# 12. Marking Used Frames
+## 12. Marking Used Frames
 
 The frame allocator marks all non‑usable frames:
 
@@ -213,7 +213,7 @@ Then logs each used frame for debugging.
 
 ---
 
-# 13. LAPIC Initialization
+## 13. LAPIC Initialization
 
 The LAPIC is initialized:
 
@@ -233,7 +233,7 @@ This performs:
 
 ---
 
-# 14. Enabling Interrupts
+## 14. Enabling Interrupts
 
 Finally, interrupts are enabled:
 
@@ -254,7 +254,7 @@ The kernel is fully operational.
 
 ---
 
-# 15. Future Work
+## 15. Future Work
 
 Planned improvements:
 
@@ -268,7 +268,7 @@ Planned improvements:
 
 ---
 
-# 16. Contributor Notes
+## 16. Contributor Notes
 
 - `kernel_init` must run before any interrupts occur  
 - LAPIC MMIO mapping must precede `setup_apic()`  
@@ -278,6 +278,6 @@ Planned improvements:
 
 ---
 
-# License
+## License
 
 MIT or Apache 2.0 — TBD.

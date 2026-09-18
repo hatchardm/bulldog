@@ -109,5 +109,4 @@ Future milestones will expand:
 ---
 
 ## License
-
 MIT or Apache 2.0 — to be determined.

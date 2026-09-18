@@ -102,7 +102,7 @@ pub fn init_idt() {
                 || (17..=18).contains(&i)
                 || (21..=27).contains(&i)
                 || (29..=31).contains(&i)
-                || i == LAPIC_TIMER_VECTOR as usize;
+                || i == LAPIC_TIMER_VECTOR as usize
                 || i == SYSCALL_VECTOR as usize; // <-- skip syscall vector
 
             if skip || idt[i].handler_addr().as_u64() != 0 {
