@@ -133,7 +133,7 @@ pub fn run_syscall_tests() {
     assert!(ret <= MAX_WRITE);
 
     // --- sys_open + sys_read happy path on /vfs/etc/hostname ---
-    let path = b"/vfs/etc/hostname\0";
+    let path = b"/etc/hostname\0";
     let fd = sys_open(path.as_ptr(), 0);
     harness_log("sys_open", "happy", fd);
     assert!(fd >= 3, "sys_open happy path should succeed");
@@ -158,7 +158,7 @@ pub fn run_syscall_tests() {
 
 
         // --- sys_write to a VFS file + read back ---
-    let path = b"/vfs/var/log/test_write.txt\0";
+    let path = b"/var/log/test_write.txt\0";
 
     // 1. Open (creates file if missing)
     let fd = sys_open(path.as_ptr(), 0);
@@ -215,7 +215,7 @@ pub fn run_syscall_tests() {
 
           // --- sys_read on closed FD ---
     // Open a file, close it, then attempt to read from the closed FD.
-    let path = b"/vfs/etc/hostname\0";
+    let path = b"/etc/hostname\0";
     let fd_tmp = sys_open(path.as_ptr(), 0);
     assert!(fd_tmp >= 3);
 

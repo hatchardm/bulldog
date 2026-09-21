@@ -31,8 +31,10 @@ pub fn sys_open(path_ptr: u64, flags: u64, _mode: u64) -> u64 {
     }
 
     // VFS path handling
-    if path.starts_with("/vfs/") {
-        let vfs_path = &path[4..];
+    // Treat all absolute paths as VFS paths
+    if path.starts_with("/") {
+    let vfs_path = path;
+
 
         match resolve_path(vfs_path) {
             Ok(fileops) => {

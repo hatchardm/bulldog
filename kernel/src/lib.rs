@@ -160,26 +160,15 @@ match kernel_init(memory_regions, phys_mem_offset) {
 ///
 /// Returns `Ok(())` if initialization succeeds, or a `MapToError` if paging fails.
 /// 
- 
 pub fn kernel_init(
     memory_regions: &'static [MemoryRegion],
     phys_mem_offset: VirtAddr,
 ) -> Result<(), ()> {
     info!("kernel_init: starting");
 
-    info!("Memory map from bootloader:");
-    for region in memory_regions {
-        info!(
-            "  kind={:?}, start={:#018x}, end={:#018x}",
-            region.kind,
-            region.start,
-            region.end,
-        );
-    }
+    // ... existing memory map + HHDM logging ...
 
-    info!("Physical memory offset (HHDM): {:#018x}", phys_mem_offset.as_u64());
-
-    // 🔹 Use global mapper + frame allocator (unsafe because of static mut)
+    // Heap
     let mut mapper_guard = MAPPER.lock();
     let mapper = mapper_guard.as_mut().expect("MAPPER not initialized");
 
@@ -189,18 +178,27 @@ pub fn kernel_init(
     init_heap(mapper, fa).expect("init_heap failed");
     info!("Heap initialized");
 
+    // GDT / TSS
     info!("Initializing GDT/TSS");
     gdt::init();
     info!("GDT/TSS Initialized");
 
+    // PIC off
     info!("Disabling PIC");
     disable_pic();
     info!("PIC Disabled");
 
+    // IDT
     info!("Initializing IDT");
     interrupts::init_idt();
     info!("IDT Initialized");
 
+    // Syscall handler
+    info!("Initializing syscall handler");
+    crate::syscall::init_syscall();
+    info!("Syscall handler ready");
+
+    // LAPIC + APIC
     info!("Mapping LAPIC MMIO");
     map_lapic_mmio(mapper, fa);
     info!("LAPIC MMIO mapped");
@@ -209,14 +207,32 @@ pub fn kernel_init(
     apic::setup_apic();
     info!("APIC setup complete");
 
+    // Enable interrupts
     info!("Enabling Interrupts");
     x86_64::instructions::interrupts::enable();
     info!("Interrupts Enabled");
 
+    // VFS init (creates /etc/hostname, /var/log/test_write.txt)
+    vfs_init();
+    info!("VFS initialized");
+
+    // FD table init with stdin/stdout/stderr
+    init_fd_table_with_std();
+    info!("FD table initialized");
+
+    // Optional: syscall harness, gated by existing feature
+    #[cfg(feature = "syscall_tests")]
+    {
+        info!("Running syscall harness");
+        crate::tests::syscall_harness::run_syscall_tests();
+        info!("Syscall harness completed");
+    }
 
     info!("kernel_init: completed");
     Ok(())
 }
+
+
 
 
 
