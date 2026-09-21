@@ -1,4 +1,5 @@
-use bootloader_api::info::{MemoryRegion, MemoryRegionKind};
+use boot_proto::{MemoryRegion, MemoryRegionKind};
+
 use x86_64::{
     PhysAddr, VirtAddr,
     structures::paging::{
@@ -7,12 +8,17 @@ use x86_64::{
     },
     registers::control::Cr3,
 };
-use log::{info, debug, warn, error, trace}; // log macros
+
+use log::{info, debug, warn, error, trace};
 
 extern crate alloc;
 use alloc::vec::Vec;
 use alloc::collections::BTreeSet;
+
 use crate::apic::LAPIC_VIRT_BASE;
+use crate::elf::loader::{SegmentFlags, ElfError};
+use crate::elf::types::Elf64_Ehdr;
+use crate::elf::loader::{validate_elf_header, get_program_headers, load_segments};
 
 /// Same safety requirements as `init`.
 unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut PageTable {
@@ -20,7 +26,7 @@ unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut
     let phys = level_4_table_frame.start_address();
     let virt = physical_memory_offset + phys.as_u64();
     let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
-   &mut *page_table_ptr
+    &mut *page_table_ptr
 }
 
 /// Initializes an OffsetPageTable using the given physical memory offset.
@@ -52,8 +58,8 @@ pub struct BootInfoFrameAllocator {
 
 pub struct FrameBitmap {
     bits: *mut [u8; 32768],
-    base_address: u64,     // e.g., 0x100000
-    frame_count: usize,    // e.g., 262_144
+    base_address: u64,
+    frame_count: usize,
 }
 
 static mut BITMAP: [u8; 32768] = [0; 32768];
@@ -63,8 +69,8 @@ impl FrameBitmap {
         unsafe {
             FrameBitmap {
                 bits: &raw mut BITMAP,
-                base_address: 0x100000, // Start at 1 MiB
-                frame_count: 262_144,   // 1 GiB of 4 KiB frames
+                base_address: 0x100000,
+                frame_count: 262_144,
             }
         }
     }
@@ -75,20 +81,18 @@ impl FrameBitmap {
         unsafe { &*self.bits }
     }
 
-  pub fn contains(&self, frame: PhysFrame) -> bool {
-    let index = frame.start_address().as_u64() / 4096;
-    let byte = (index / 8) as usize;
-    let bit = (index % 8) as u8;
+    pub fn contains(&self, frame: PhysFrame) -> bool {
+        let index = frame.start_address().as_u64() / 4096;
+        let byte = (index / 8) as usize;
+        let bit = (index % 8) as u8;
 
-    if byte >= self.as_slice().len() {
-        error!("Frame {:?} out of bounds for bitmap", frame);
-        return false;
+        if byte >= self.as_slice().len() {
+            error!("Frame {:?} out of bounds for bitmap", frame);
+            return false;
+        }
+
+        self.as_slice()[byte] & (1 << bit) != 0
     }
-
-    self.as_slice()[byte] & (1 << bit) != 0
-}
-
-
 }
 
 impl FrameBitmap {
@@ -100,23 +104,16 @@ impl FrameBitmap {
     }
 }
 
-
-
 impl FrameBitmap {
-   
-  pub fn is_used(&self, frame: PhysFrame) -> bool {
-    let index = frame.start_address().as_u64() / 4096;
-    let byte = (index / 8) as usize;
-    let bit = (index % 8) as u8;
-    self.as_slice()[byte] & (1 << bit) != 0
+    pub fn is_used(&self, frame: PhysFrame) -> bool {
+        let index = frame.start_address().as_u64() / 4096;
+        let byte = (index / 8) as usize;
+        let bit = (index % 8) as u8;
+        self.as_slice()[byte] & (1 << bit) != 0
+    }
 }
 
-}
-
-
-
 impl FrameBitmap {
-   
     pub fn iter_used_frames(&self) -> impl Iterator<Item = PhysFrame> + '_ {
         self.as_slice().iter().enumerate().flat_map(|(byte_index, byte)| {
             (0..8).filter_map(move |bit| {
@@ -131,39 +128,31 @@ impl FrameBitmap {
     }
 }
 
-
 impl FrameBitmap {
-
-fn as_mut_slice(&mut self) -> &mut [u8; 32768] {
-    unsafe { &mut *self.bits }
-}
-
-
-  pub fn mark_used(&mut self, frame: PhysFrame) -> bool {
-    let index = frame.start_address().as_u64() / 4096;
-    let byte = (index / 8) as usize;
-    let bit = (index % 8) as u8;
-
-    if byte >= self.as_mut_slice().len() {
-       error!("Frame {:?} out of bounds for bitmap", frame);
-        return false;
+    fn as_mut_slice(&mut self) -> &mut [u8; 32768] {
+        unsafe { &mut *self.bits }
     }
 
-    self.as_mut_slice()[byte] |= 1 << bit;
-    true
+    pub fn mark_used(&mut self, frame: PhysFrame) -> bool {
+        let index = frame.start_address().as_u64() / 4096;
+        let byte = (index / 8) as usize;
+        let bit = (index % 8) as u8;
+
+        if byte >= self.as_mut_slice().len() {
+            error!("Frame {:?} out of bounds for bitmap", frame);
+            return false;
+        }
+
+        self.as_mut_slice()[byte] |= 1 << bit;
+        true
+    }
 }
-
-
-}
-
-
 
 impl PreHeapAllocator {
     pub fn into_vec(self) -> Vec<PhysFrame> {
         self.frames.iter().filter_map(|&f| f).collect()
     }
 }
-
 
 unsafe impl FrameAllocator<Size4KiB> for PreHeapAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
@@ -178,59 +167,44 @@ unsafe impl FrameAllocator<Size4KiB> for PreHeapAllocator {
     }
 }
 
-
 impl BootInfoFrameAllocator {
     pub fn new(memory_map: &'static [MemoryRegion], frames: Vec<PhysFrame>) -> Self {
-    info!("Entered BootInfoFrameAllocator::new");
+        info!("Entered BootInfoFrameAllocator::new");
 
         BootInfoFrameAllocator {
             memory_map,
             frames,
             next: 0,
             allocated: FrameBitmap::new(),
-
         }
     }
 }
 
 impl BootInfoFrameAllocator {
-   pub fn allocated_frames(&self) -> impl Iterator<Item = PhysFrame> {
-    self.allocated.iter_used_frames()
-   }
+    pub fn allocated_frames(&self) -> impl Iterator<Item = PhysFrame> {
+        self.allocated.iter_used_frames()
+    }
 }
 
-//=============================END OF FIRST HALF---------------------------------
-
-//-----------------------------START OF SECOND HALF-------------------------------
-
 impl BootInfoFrameAllocator {
-    /// Convert allocator into a vector of frames.
     pub fn into_vec(self) -> Vec<PhysFrame> {
         self.frames
     }
 }
 
 impl BootInfoFrameAllocator {
-    /// Check if a frame is already allocated.
     pub fn is_allocated(&self, frame: PhysFrame) -> bool {
         self.allocated.contains(frame)
     }
 }
 
 impl BootInfoFrameAllocator {
-    /// Initialize a temporary allocator from memory map.
-    /// 
-    /// Returns up to 512 frames and the memory map reference.
-    /// 
-    /// # Safety
-    /// Must only be called during early boot, before heap initialization.
     pub unsafe fn init_temp(
         memory_map: &'static [MemoryRegion],
     ) -> ([Option<PhysFrame>; 512], &'static [MemoryRegion]) {
         info!("Entered BootInfoFrameAllocator::init_temp");
-        debug!("BootInfoFrameAllocator::init_temp: memory_map.len = {}", memory_map.len());
+        debug!("memory_map.len = {}", memory_map.len());
 
-        // Debug: log memory regions
         for (i, region) in memory_map.iter().enumerate() {
             debug!(
                 "Region {}: start={:#x}, end={:#x}, kind={:?}",
@@ -249,7 +223,7 @@ impl BootInfoFrameAllocator {
 
                 let frame = PhysFrame::containing_address(PhysAddr::new(addr));
                 if frame.start_address().as_u64() < 0x10000 {
-                    continue; // skip low memory
+                    continue;
                 }
 
                 debug!("Adding frame: {:#x}", addr);
@@ -267,7 +241,6 @@ impl BootInfoFrameAllocator {
 }
 
 impl BootInfoFrameAllocator {
-    /// Mark non‑usable frames as allocated in the bitmap.
     pub fn mark_used_frames(&mut self) {
         info!("Starting mark_used_frames()");
 
@@ -299,10 +272,6 @@ impl BootInfoFrameAllocator {
 }
 
 impl BootInfoFrameAllocator {
-    /// Full allocator — requires heap to be initialized.
-    /// 
-    /// # Safety
-    /// Must only be called once heap is ready.
     pub unsafe fn init(memory_map: &'static [MemoryRegion]) -> Self {
         info!("Entered BootInfoFrameAllocator::init");
         debug!("memory_map.len = {}", memory_map.len());
@@ -313,7 +282,7 @@ impl BootInfoFrameAllocator {
             for addr in (region.start..region.end).step_by(4096) {
                 let frame = PhysFrame::containing_address(PhysAddr::new(addr));
                 if frame.start_address().as_u64() < 0x10000 {
-                    continue; // skip low memory
+                    continue;
                 }
                 frames.push(frame);
             }
@@ -335,16 +304,11 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
         }
         let frame = self.frames[self.next];
         self.next += 1;
-        self.allocated.mark_used(frame); // track allocation
+        self.allocated.mark_used(frame);
         Some(frame)
     }
 }
 
-/// Map the LAPIC MMIO region into the virtual address space.
-/// 
-/// - Virtual base: `LAPIC_VIRT_BASE`
-/// - Physical base: `0xFEE00000`
-/// - Flags: PRESENT | WRITABLE | NO_EXECUTE
 pub fn map_lapic_mmio(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
@@ -363,11 +327,9 @@ pub fn map_lapic_mmio(
             .flush();
     }
 
-    debug!("Mapped LAPIC page at {:#x}", virt.as_u64());
     info!("LAPIC MMIO fully mapped");
 }
 
-/// Map a single page to a physical frame with the given flags.
 pub fn map_page(
     mapper: &mut impl Mapper<Size4KiB>,
     virt: VirtAddr,
@@ -386,7 +348,6 @@ pub fn map_page(
     }
 }
 
-/// Find the first unused frame in the allocator bitmap.
 pub fn find_unused_frame(allocator: &FrameBitmap) -> Option<PhysFrame> {
     for frame in allocator.all_frames() {
         if !allocator.is_used(frame) {
@@ -396,7 +357,69 @@ pub fn find_unused_frame(allocator: &FrameBitmap) -> Option<PhysFrame> {
     None
 }
 
+pub fn map_elf_segment(
+    mapper: &mut impl Mapper<Size4KiB>,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    vaddr_start: u64,
+    mem_size: usize,
+    file_bytes: &[u8],
+    flags: &SegmentFlags,
+) -> Result<(), ElfError> {
+    let start = VirtAddr::new(vaddr_start);
+    let end   = start + (mem_size as u64).saturating_sub(1);
+    let start_page = Page::containing_address(start);
+    let end_page   = Page::containing_address(end);
 
+    let mut page_flags = PageTableFlags::PRESENT;
+    if flags.writable   { page_flags |= PageTableFlags::WRITABLE; }
+    if !flags.executable { page_flags |= PageTableFlags::NO_EXECUTE; }
 
+    for page in Page::range_inclusive(start_page, end_page) {
+        let frame = frame_allocator
+            .allocate_frame()
+            .ok_or(ElfError::BadPhSize)?;
+        unsafe {
+            mapper.map_to(page, frame, page_flags, frame_allocator)
+                .map_err(|_| ElfError::BadPhSize)?
+                .flush();
+        }
+    }
 
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            file_bytes.as_ptr(),
+            start.as_mut_ptr(),
+            file_bytes.len(),
+        );
+    }
 
+    if mem_size > file_bytes.len() {
+        let zero_start = start + file_bytes.len() as u64;
+        let zero_len   = mem_size - file_bytes.len();
+        unsafe {
+            core::ptr::write_bytes(zero_start.as_mut_ptr::<u8>(), 0, zero_len);
+        }
+    }
+
+    Ok(())
+}
+
+pub fn load_elf_into_address_space(
+    mapper: &mut impl Mapper<Size4KiB>,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    elf_data: &[u8],
+) -> Result<u64, ElfError> {
+    let hdr = unsafe {
+        &*(elf_data.as_ptr() as *const Elf64_Ehdr)
+    };
+
+    validate_elf_header(hdr)?;
+    let phdrs = get_program_headers(elf_data, hdr)?;
+
+    load_segments(elf_data, hdr, phdrs, |vaddr, mem_size, file_bytes, flags| {
+        map_elf_segment(mapper, frame_allocator, vaddr, mem_size, file_bytes, flags)
+            .map_err(|_| ())
+    })?;
+
+    Ok(hdr.e_entry)
+}

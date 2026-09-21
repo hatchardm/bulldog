@@ -1,0 +1,202 @@
+# Bulldog Kernel – APIC Subsystem (Current Implementation)
+
+This document describes Bulldog’s *current* APIC implementation, focused on the Local APIC (LAPIC) on the bootstrap processor. It reflects the real behavior of:
+
+- `apic.rs` (LAPIC MMIO, timer, ID/version, EOI)
+- `memory.rs` (LAPIC MMIO mapping)
+- `gdt.rs` and `stack.rs` (IST stack used by LAPIC timer/page faults)
+- `interrupts` (LAPIC timer vector)
+
+The I/O APIC (IOAPIC), full vector layout, and SMP features are **not yet implemented** and are treated as future work.
+
+---
+
+## 1. Overview
+
+Bulldog uses the Local APIC (LAPIC) for:
+
+- Per‑CPU interrupt delivery (currently only the BSP)
+- The LAPIC timer as the primary periodic interrupt source
+- Reporting APIC ID and version
+- End‑of‑interrupt (EOI) signaling
+
+The legacy PIC8259 is assumed quiescent and is not used for normal operation in the current code.
+
+The IOAPIC, detailed vector layout, and SMP IPIs are part of the planned design but are **not implemented** yet.
+
+---
+
+## 2. LAPIC MMIO Mapping
+
+The LAPIC is memory‑mapped into higher‑half kernel space at a fixed virtual address:
+
+```rust
+pub const LAPIC_VIRT_BASE: u64 = 0xFFFF_FF00_0000_0000;
+pub const LAPIC_BASE: usize = LAPIC_VIRT_BASE as usize;
+```
+
+`memory.rs` provides `map_lapic_mmio()` to map:
+
+- Virtual: `LAPIC_VIRT_BASE`
+- Physical: `0xFEE0_0000`
+- Flags: `PRESENT | WRITABLE | NO_EXECUTE`
+
+This mapping must be established before LAPIC access or `setup_apic()` is called.
+
+Access helpers:
+
+```rust
+pub fn lapic_read(reg: LapicRegister) -> u32 { ... }
+pub fn lapic_write(reg: LapicRegister, value: u32) { ... }
+```
+
+These wrap volatile MMIO loads/stores at `LAPIC_VIRT_BASE + offset`.
+
+---
+
+## 3. LAPIC Registers and Timer Modes
+
+`apic.rs` defines a subset of LAPIC registers:
+
+```rust
+pub enum LapicRegister {
+    LVT_TIMER     = 0x320,
+    DIVIDE_CONFIG = 0x3E0,
+    INITIAL_COUNT = 0x380,
+    CURRENT_COUNT = 0x390,
+    EOI           = 0xB0,
+    SVR           = 0xF0,
+    ID            = 0x20,
+    VERSION       = 0x30,
+}
+```
+
+Timer modes are modeled as:
+
+```rust
+#[repr(u32)]
+pub enum LapicTimer {
+    OneShot     = 0b00 << 17,
+    Periodic    = 0b01 << 17,
+    TscDeadline = 0b10 << 17,
+}
+```
+
+In the current implementation, only **periodic** mode is used.
+
+---
+
+## 4. LAPIC Initialization (`setup_apic`)
+
+`setup_apic()` performs LAPIC bring‑up and timer configuration:
+
+1. **Read LAPIC base MSR (`0x1B`)**  
+   - Extract physical LAPIC base (`apic_base & 0xFFFFF000`)  
+   - Check the enable bit (`(apic_base >> 11) & 1`)  
+   - Panic if the LAPIC is not enabled  
+
+2. **Log LAPIC ID and version**  
+   - Read `LapicRegister::VERSION`  
+   - Read `LapicRegister::ID`  
+   - Compare LAPIC ID with CPUID APIC ID (`cpuid_apic_id()`)  
+
+3. **Enable LAPIC via Spurious Interrupt Vector Register (SVR)**  
+   - Write `0x100 | SPURIOUS_VECTOR` to `SVR`  
+   - `SPURIOUS_VECTOR` is currently `0xFF`  
+
+4. **Configure LAPIC timer**  
+   - Set divisor: write `0b0011` to `DIVIDE_CONFIG` (divide by 16)  
+   - Set `LVT_TIMER` to `LAPIC_TIMER_VECTOR | LapicTimer::Periodic`  
+   - Confirm periodic bit via readback of `LVT_TIMER`  
+
+5. **Start timer**  
+   - Write an initial count (currently `500_000`) to `INITIAL_COUNT`  
+   - Read `CURRENT_COUNT` for logging  
+
+The LAPIC timer uses a dedicated vector `LAPIC_TIMER_VECTOR` defined in the interrupts subsystem. That vector is routed onto an IST stack defined in `gdt.rs`/`stack.rs`.
+
+---
+
+## 5. EOI Handling
+
+After handling a LAPIC‑delivered interrupt, the kernel must signal completion via EOI:
+
+```rust
+pub fn send_eoi() {
+    lapic_write(LapicRegister::EOI, 0);
+}
+```
+
+Every interrupt handler that is serviced via the LAPIC (e.g., the LAPIC timer) is responsible for calling `send_eoi()` before returning.
+
+---
+
+## 6. APIC ID and CPUID Integration
+
+`apic.rs` provides helpers for APIC identity and MSR access:
+
+- `read_msr(msr: u32) -> u64` — reads model specific registers using `rdmsr`
+- `cpuid_apic_id() -> u8` — obtains the APIC ID from CPUID leaf 1 (bits 24–31 of EBX)
+
+`setup_apic()` logs:
+
+- LAPIC ID from MMIO
+- APIC ID from CPUID
+
+This aids debugging of APIC configuration and, in the future, SMP bring‑up.
+
+---
+
+## 7. Interaction With Other Subsystems
+
+### GDT/TSS and IST Stacks
+
+- The LAPIC timer and page‑fault handlers run on IST1 (`LAPIC_IST_INDEX`)  
+- IST1 is backed by `LAPIC_STACK`, a dedicated 128 KiB stack  
+- The TSS and IST entries are initialized in `gdt.rs`  
+
+This ensures LAPIC‑delivered interrupts run on a known‑good stack, improving robustness.
+
+### Memory Management
+
+- LAPIC MMIO mapping is configured by `map_lapic_mmio()` in `memory.rs`  
+- This mapping uses higher‑half virtual addresses and the direct physical mapping assumptions documented in `memory.md`
+
+### Interrupts
+
+- `LAPIC_TIMER_VECTOR` is defined in the interrupts subsystem  
+- The IDT entry for `LAPIC_TIMER_VECTOR` must:  
+  - Run on IST1 (via IDT attributes)  
+  - Call `send_eoi()` before returning  
+
+---
+
+## 8. Future Work
+
+Planned APIC‑related features include:
+
+- IOAPIC initialization and MMIO mapping  
+- Full hardware IRQ routing through the IOAPIC  
+- Deterministic global vector layout (exceptions, IRQs, LAPIC, syscalls)  
+- SMP support with per‑CPU LAPIC configuration and IPIs  
+- Dynamic LAPIC timer calibration and tick rate control  
+- Integration with a scheduler and timekeeping subsystem  
+
+These features are part of Bulldog’s design goals but are **not implemented yet**.
+
+---
+
+## 9. Contributor Notes
+
+- Ensure `map_lapic_mmio()` is called before `setup_apic()`  
+- Do not change `LAPIC_VIRT_BASE` without updating memory mapping and documentation  
+- Always call `send_eoi()` in LAPIC‑based interrupt handlers  
+- Keep `setup_apic()` logging intact; it is critical for early bring‑up debugging  
+- When adding new LAPIC uses (e.g., IPIs), document the vectors and behavior here  
+
+---
+
+## License
+
+MIT or Apache 2.0 — TBD.
+

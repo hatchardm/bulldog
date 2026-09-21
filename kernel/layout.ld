@@ -1,28 +1,18 @@
-ENTRY(kernel_main)
+ENTRY(kernel_entry)
 
 SECTIONS {
-    . = ALIGN(4K);
 
-   .text : {
-    KEEP(*(.text.entry_point))  /* ← preserves the kernel entrypoint */
-    *(.text*)
-}
-
-
-    .rodata : {
-        *(.rodata*)
+    .text : {
+        KEEP(*(.text.entry_point))
+        *(.text*)
     }
 
-    .data : {
-        *(.data*)
-    }
-
-    .bss : {
-        *(.bss*)
-        *(COMMON)
-    }
+    .rodata : { *(.rodata*) }
+    .data   : { *(.data*) }
+    .bss    : { *(.bss*) *(COMMON) }
 
     .stack ALIGN(4K) : {
         KEEP(*(.stack))
     }
 }
+

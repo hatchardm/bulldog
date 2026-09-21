@@ -1,98 +1,238 @@
-# 🤝 Contributing to Bulldog
+# Contributing to Bulldog
 
-Thanks for your interest in Bulldog! This project is a custom operating system kernel written in Rust, targeting the `x86_64-bulldog` architecture. Contributions are welcome from anyone curious about systems programming, Rust internals, or low‑level OS concepts.
+Bulldog is a custom operating system kernel written in Rust for the `x86_64-bulldog`
+architecture. Contributions are welcome from anyone interested in systems programming,
+low‑level architecture, Rust internals, or kernel design.
+
+This document describes the contributor workflow, project hygiene, subsystem boundaries,
+and expectations for submitting changes.
 
 ---
 
-## 🛠 Development Workflow
+## Development Workflow
 
 Bulldog provides a helper script at `scripts/dev` to streamline common tasks:
 
-./scripts/dev build   # Compile the kernel
-./scripts/dev run     # Launch Bulldog in QEMU
-./scripts/dev test    # Execute kernel tests
-./scripts/dev clean   # Remove build artifacts
+```
+./scripts/dev build    # Compile the kernel
+./scripts/dev run      # Launch Bulldog in QEMU
+./scripts/dev test     # Execute kernel tests
+./scripts/dev clean    # Remove build artifacts
+```
 
-This script checks prerequisites (Rust nightly, required components, VS Code extensions if applicable) and confirms when your environment is ready.
+The script checks prerequisites (Rust nightly, required components, QEMU availability) and
+confirms when your environment is ready.
 
----
-
-## 📂 Project Hygiene
-
-- **Branching**
-  - Use `main` for stable development.
-  - Create feature branches for experiments or new subsystems.
-  - Prefix branches with `feat/`, `fix/`, or `doc/` for clarity.
-
-- **Commits**
-  - Keep commits atomic and descriptive.
-  - Use imperative mood: `Add syscall scaffolding`, not `Added syscall scaffolding`.
-  - Reference issues when applicable.
-  - Example: `feat(logger): add log-level filtering with framebuffer color output`
-
-- **Code Style**
-  - Follow Rust’s `rustfmt` defaults.
-  - Avoid `println!` for kernel output — use the logging interface.
-  - Document unsafe blocks with clear justification.
+All contributions should build and run successfully using this script.
 
 ---
 
-## 🧪 Testing
+## Repository Structure
 
-- Run `./scripts/dev test` before submitting a PR.
-- Kernel tests should be deterministic and reproducible.
-- For experimental features, mark tests clearly and isolate them in separate modules.
+```
+bulldog/
+│
+├── kernel/                 # Kernel source code
+│   ├── src/
+│   └── Cargo.toml
+│
+├── docs/
+│   ├── architecture/       # Hardware-facing subsystem documentation
+│   └── interface/          # User-facing kernel interface documentation
+│
+└── README.md               # Project overview
+```
+
+### Architecture Layer (`docs/architecture/`)
+Hardware‑facing subsystems:
+
+- Memory & paging  
+- GDT/TSS  
+- Interrupts & IDT  
+- APIC/LAPIC  
+- Kernel layout  
+- Boot & initialization  
+- Context switching (CPU-level)
+
+### Interface Layer (`docs/interface/`)
+User‑mode boundary and kernel interface:
+
+- Syscall ABI  
+- Syscall table  
+- Syscall dispatcher  
+- Syscall harness  
+- VFS design (planned)  
+- ELF loader (planned)  
+- Process model (interface-level)  
+- Privilege switching (user ↔ kernel transitions)
+
+Contributors should keep documentation in both layers up to date.
 
 ---
 
-## 📜 Guidelines
+## Branching Strategy
 
-- Be explicit in documentation: assume contributors are new to kernel development.
-- Provide confirmation messages in scripts to reduce ambiguity.
-- Keep onboarding frictionless — scripts should auto‑check prerequisites and fail gracefully.
-- Contributions are welcome under MIT or Apache 2.0 (TBD).
+Bulldog’s development is organized around milestone branches:
+
+```
+main                    → Latest stable kernel build (APIC baseline)
+feature/pic8259         → Legacy PIC baseline
+feature/apic            → APIC + LAPIC timer milestone
+feature/syscall         → Privilege switching + syscall infrastructure
+feature/kernel-init-rebuild → Current milestone (kernel init, interface layer)
+```
+
+Contributor branches should use:
+
+- `feat/<name>` for new features  
+- `fix/<name>` for bug fixes  
+- `doc/<name>` for documentation updates  
+
+All work should merge into the active milestone branch before reaching `main`.
 
 ---
 
-## 🚀 Roadmap Alignment
+## Commit Guidelines
+
+- Keep commits atomic and descriptive  
+- Use imperative mood:  
+  - `Add syscall dispatcher`  
+  - `Refactor GDT initialization`  
+- Reference issues when applicable  
+- Document unsafe blocks with clear justification  
+- Avoid large, multi‑purpose commits  
+- Ensure commit history remains readable and contributor‑friendly
+
+Example:
+
+```
+feat(syscall): add alloc/free trampolines and update syscall table
+```
+
+---
+
+## Code Style
+
+- Follow Rust’s `rustfmt` defaults  
+- Avoid `println!` for runtime output  
+- Use the kernel logging interface (`info!`, `warn!`, `error!`, `debug!`, `trace!`)  
+- Keep subsystem boundaries clean  
+- Maintain architectural clarity  
+- Avoid hidden side effects  
+- Prefer explicit, deterministic behavior  
+- Keep unsafe usage minimal and well‑documented
+
+---
+
+## Testing
+
+Before submitting a PR:
+
+- Run `./scripts/dev test`  
+- Ensure tests pass under QEMU  
+- Validate syscall entry/exit paths  
+- Confirm register preservation (syscall harness)  
+- Ensure logs remain deterministic  
+- Avoid introducing nondeterministic behavior in interrupts or scheduling
+
+Hardware validation is optional but encouraged if APIC support is available.
+
+---
+
+## Documentation Requirements
+
+All contributions that modify subsystem behavior must update the relevant documentation:
+
+### Architecture changes → update:
+- `docs/architecture/*`
+
+### Interface changes → update:
+- `docs/interface/*`
+
+Documentation must:
+
+- Be clear and technically accurate  
+- Explain invariants and constraints  
+- Describe contributor expectations  
+- Match the current implementation  
+- Avoid outdated references  
+
+Bulldog’s documentation is part of the project’s architecture — treat it as a first‑class component.
+
+---
+
+## Roadmap Alignment
 
 Bulldog’s roadmap includes:
 
-- Privilege switching
-- Syscall interface
-- Process scheduling
-- User mode execution
+### Near-Term
+- Kernel init rebuild  
+- Syscall validation  
+- Minimal user‑mode execution  
+- ELF loader  
+- Basic VFS (ramfs/devfs)
 
-When contributing, align your work with these milestones or propose new directions via issues.
+### Mid-Term
+- Cooperative scheduler  
+- Preemptive scheduling via LAPIC timer  
+- Process creation syscalls  
+- FD table integration  
+- User-mode heap allocator
+
+### Long-Term
+- Signals  
+- IPC  
+- Multi-threading  
+- Multi-CPU load balancing  
+- ext2/ext4 filesystem support  
+- Dynamic linker / shared libraries
+
+Contributions should align with these milestones or propose new directions via issues.
 
 ---
 
-## 🐾 Getting Help
+## PR Checklist
 
-- Open an issue for bugs, questions, or feature requests.
-- Use discussions for design proposals.
-- PRs should be small, focused, and reviewed before merge.
+- [ ] Code builds via `scripts/dev build`  
+- [ ] Kernel runs via `scripts/dev run`  
+- [ ] Tests pass under QEMU  
+- [ ] Syscall harness passes  
+- [ ] Commit messages follow guidelines  
+- [ ] Documentation updated  
+- [ ] No stray `println!` in runtime code  
+- [ ] No architectural regressions  
+- [ ] No nondeterministic behavior introduced  
 
 ---
 
-## 📝 Logging Guidelines
+## Getting Help
 
-Bulldog uses the `log` crate for all runtime output. This ensures consistent severity levels, structured messages, and contributor-friendly debugging. The kernel logger supports runtime log-level filtering (Info, Warn, Error, Debug, Trace) and color-coded framebuffer output.
+- Open an issue for bugs, questions, or feature requests  
+- Use discussions for design proposals  
+- Keep PRs small, focused, and reviewable  
+- Ask maintainers for subsystem guidance when needed  
 
-✅ Use log macros
-- Normal runtime events → `info!`
-- Verbose developer details → `debug!` or `trace!`
-- Unexpected but survivable conditions → `warn!`
-- Fatal faults or unrecoverable errors → `error!`
+---
 
-⚠️ `print!`/`println!` macros
-- Only for early boot stages (before `logger_init()` runs).
-- They bypass the logging system and write directly to the framebuffer.
-- Do not use them for runtime output once the logger is initialized.
+## Logging Guidelines
 
-🚫 Do not
-- Introduce new `println!` calls in runtime code.
-- Use `println!` as a shortcut for logging — always prefer the appropriate log macro.
+Bulldog uses the `log` crate for all runtime output. This ensures consistent severity levels,
+structured messages, and contributor‑friendly debugging.
+
+Use:
+
+- `info!` for normal runtime events  
+- `debug!` / `trace!` for verbose developer details  
+- `warn!` for unexpected but survivable conditions  
+- `error!` for fatal faults or unrecoverable errors  
+
+`println!` is allowed **only** during early boot before `logger_init()` runs.
+
+---
+
+## License
+
+Contributions are welcome under MIT or Apache 2.0 (TBD).
 
 ---
 

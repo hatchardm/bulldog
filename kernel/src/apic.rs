@@ -56,30 +56,35 @@ pub fn lapic_write(reg: LapicRegister, value: u32) {
 /// - Configures timer in periodic mode with divisor 16.
 /// - Sets initial count and confirms configuration.
 pub fn setup_apic() {
-    info!("Entered setup_apic()");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("Entered setup_apic()");}
 
     // Read LAPIC base MSR (0x1B).
     let apic_base = read_msr(0x1B);
     let base_phys = apic_base & 0xFFFFF000;
     let enabled = (apic_base >> 11) & 1;
-    info!("APIC base MSR: {:#x}", apic_base);
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("APIC base MSR: {:#x}", apic_base);
     info!("APIC physical base: {:#x}", base_phys);
-    info!("LAPIC enabled: {}", enabled);
+    info!("LAPIC enabled: {}", enabled);}
     if enabled == 0 {
         panic!("LAPIC is not enabled!");
     }
 
     // LAPIC version and ID.
     let version = lapic_read(LapicRegister::VERSION);
-    info!("LAPIC VERSION: {:#x}", version);
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("LAPIC VERSION: {:#x}", version);}
 
     let id = lapic_read(LapicRegister::ID);
     let cpuid_id = cpuid_apic_id();
-    info!("LAPIC ID: {:#x}, CPUID APIC ID: {:#x}", id, cpuid_id);
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("LAPIC ID: {:#x}, CPUID APIC ID: {:#x}", id, cpuid_id);}
 
     // Enable LAPIC via Spurious Interrupt Vector Register.
     lapic_write(LapicRegister::SVR, 0x100 | SPURIOUS_VECTOR);
-    info!("SVR written (enable + spurious=0xFF)");
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("SVR written (enable + spurious=0xFF)");}
 
     // Configure LAPIC timer: divisor = 16, periodic mode.
     lapic_write(LapicRegister::DIVIDE_CONFIG, 0b0011);
@@ -90,19 +95,21 @@ pub fn setup_apic() {
 
     // Confirm mode + vector.
     let lvt = lapic_read(LapicRegister::LVT_TIMER);
-    info!(
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!(
         "LVT_TIMER: {:#x} (periodic bit set? {})",
         lvt,
         (lvt & (1 << 17)) != 0
-    );
+    );}
 
     // Set initial count (tick rate tuning).
     lapic_write(LapicRegister::INITIAL_COUNT, 500_000);
 
     let current = lapic_read(LapicRegister::CURRENT_COUNT);
-    info!("LAPIC CURRENT COUNT: {}", current);
-
+    #[cfg(not(feature = "syscall_tests"))]
+    {info!("LAPIC CURRENT COUNT: {}", current);
     info!("LAPIC timer configured");
+    }
 }
 
 /// Send End-of-Interrupt (EOI) to LAPIC.

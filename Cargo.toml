@@ -1,19 +1,20 @@
-[package]
-name = "bulldog"
-version = "0.1.0"
-edition = "2024"
-
-[build-dependencies]
-bootloader = "0.11.12"
-kernel = { path = "kernel", artifact = "bin", target = "x86_64-unknown-none" }
-
-[dependencies]
-# used for UEFI booting in QEMU
-ovmf-prebuilt = "0.1.0-alpha"
-
 [workspace]
-members = ["kernel"]
+members = [
+    "kernel",
+    "kernel-bin",
+    "bootloader",
+    "boot-proto",
+]
+
+resolver = "2"
 
 [profile.dev]
-debug = true
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = false
+opt-level = 0
+codegen-units = 1
+
 
