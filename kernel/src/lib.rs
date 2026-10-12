@@ -28,7 +28,7 @@ use x86_64::{
     PhysAddr, VirtAddr,
     structures::paging::{
         mapper::MapToError, mapper::Mapper, FrameAllocator, Page, PageTableFlags,
-        PhysFrame, Size4KiB, Translate,
+        PhysFrame, Size4KiB, Size1GiB, Translate,
     },
 };
 
@@ -64,6 +64,7 @@ pub mod user_mode;
 pub mod text;
 pub mod font8x16;
 pub mod paging;
+pub mod fs;
 
 #[cfg(feature = "syscall_tests")]
 mod tests;
@@ -80,13 +81,30 @@ use crate::framebuffer::KernelFramebuffer;
 use crate::framebuffer::PixelFormat;
 use crate::paging::{MAPPER, FRAME_ALLOCATOR};
 use crate::allocator::init_heap;
+use crate::elf::types::Elf64_Ehdr;
+use crate::elf::loader::{validate_elf_header, get_program_headers, load_segments};
+use crate::user_mode::enter_user_mode;
 
+static mut FAT_ADDR: u64 = 0;
+static mut FAT_SIZE: u64 = 0;
 
+pub fn fat_phys_addr() -> u64 {
+    unsafe { FAT_ADDR }
+}
+
+pub fn fat_size() -> u64 {
+    unsafe { FAT_SIZE }
+}
 
 
 #[unsafe(no_mangle)]
 pub fn kernel_main(boot_info: &mut BootInfo) -> ! {
     serial_println("Entered kernel_main");
+    unsafe {
+    FAT_ADDR = boot_info.fat_phys_addr;
+    FAT_SIZE = boot_info.fat_size;
+}
+
 
     // 🎨 Framebuffer setup
     let mut fb = KernelFramebuffer::from_bootinfo(boot_info);
@@ -169,14 +187,70 @@ pub fn kernel_init(
     // ... existing memory map + HHDM logging ...
 
     // Heap
+
+    {
     let mut mapper_guard = MAPPER.lock();
     let mapper = mapper_guard.as_mut().expect("MAPPER not initialized");
 
     let mut fa_guard = FRAME_ALLOCATOR.lock();
     let fa = fa_guard.as_mut().expect("FRAME_ALLOCATOR not initialized");
+
     info!("Initializing Heap");
     init_heap(mapper, fa).expect("init_heap failed");
     info!("Heap initialized");
+
+    }  // mapper_guard + fa_guard dropped
+
+    // -------------------------------
+    // FAT32 init (heap is ready)
+    // -------------------------------
+    info!("Initializing FAT32 RamDisk");
+
+    let disk = crate::fs::block::RamDisk {
+        phys_addr: unsafe { FAT_ADDR },
+        size: unsafe { FAT_SIZE },
+    };
+
+    info!("FAT RamDisk: phys={:#x}, size={} bytes",
+        disk.phys_addr, disk.size);
+
+    // Read BPB
+    let bpb = crate::fs::fat::FatBpb::read(&disk);
+
+    info!(
+        "BPB: bytes_per_sector={} sectors_per_cluster={} reserved_sectors={} num_fats={} fat_size_sectors={} root_cluster={}",
+        bpb.bytes_per_sector,
+        bpb.sectors_per_cluster,
+        bpb.reserved_sectors,
+        bpb.num_fats,
+        bpb.fat_size_sectors,
+        bpb.root_cluster
+    );
+
+    // Read FAT table (uses Vec, now safe)
+    let fat = crate::fs::fat::FatTable::read(&disk, &bpb);
+
+    info!("FAT table loaded: {} entries", fat.entries.len());
+
+    crate::fs::fat::set_global_fat(bpb, fat);
+    info!("FAT32 initialized");
+
+    let bpb = crate::fs::fat::get_global_bpb();
+    let fat = crate::fs::fat::get_global_fat();
+
+    let disk = crate::fs::block::RamDisk {
+        phys_addr: unsafe { FAT_ADDR },
+        size: unsafe { FAT_SIZE },
+    };
+
+    let root_entries = crate::fs::fat::read_directory(&disk, bpb, fat, bpb.root_cluster);
+
+    info!("Root directory entries:");
+    for e in root_entries.iter() {
+        let name = core::str::from_utf8(&e.name).unwrap_or("???");
+        info!("  {}  cluster={}  size={}", name, e.cluster(), e.size);
+    }
+
 
     // GDT / TSS
     info!("Initializing GDT/TSS");
@@ -198,10 +272,19 @@ pub fn kernel_init(
     crate::syscall::init_syscall();
     info!("Syscall handler ready");
 
-    // LAPIC + APIC
+// LAPIC + APIC
+{
+    let mut mapper_guard = MAPPER.lock();
+    let mapper = mapper_guard.as_mut().expect("MAPPER not initialized");
+
+    let mut fa_guard = FRAME_ALLOCATOR.lock();
+    let fa = fa_guard.as_mut().expect("FRAME_ALLOCATOR not initialized");
+
     info!("Mapping LAPIC MMIO");
     map_lapic_mmio(mapper, fa);
     info!("LAPIC MMIO mapped");
+}
+
 
     info!("Setting up APIC");
     apic::setup_apic();
@@ -212,6 +295,7 @@ pub fn kernel_init(
     x86_64::instructions::interrupts::enable();
     info!("Interrupts Enabled");
 
+
     // VFS init (creates /etc/hostname, /var/log/test_write.txt)
     vfs_init();
     info!("VFS initialized");
@@ -219,6 +303,88 @@ pub fn kernel_init(
     // FD table init with stdin/stdout/stderr
     init_fd_table_with_std();
     info!("FD table initialized");
+
+// --- new: usermode hello path ---
+#[cfg(feature = "usermode_hello")]
+{
+    info!("Loading /bin/hello ELF");
+
+    // 1) Read ELF bytes from VFS
+    let elf_bytes = match crate::vfs::read_all("/bin/hello") {
+        Ok(b) => {
+            info!("read_all(/bin/hello) -> {} bytes", b.len());
+            b
+        }
+        Err(e) => {
+            error!("read_all(/bin/hello) failed: {:?}", e);
+            panic!("failed to read /bin/hello");
+        }
+    };
+
+    // 2) Interpret header
+    let hdr = unsafe {
+        &*(elf_bytes.as_ptr() as *const Elf64_Ehdr)
+    };
+    info!("ELF ident: {:02x?}", &hdr.e_ident[..4]);
+
+    if let Err(e) = validate_elf_header(hdr) {
+        panic!("invalid ELF header: {:?}", e);
+    }
+
+    // 3) Program headers
+    let phdrs = match get_program_headers(&elf_bytes, hdr) {
+        Ok(p) => {
+            info!("program headers count: {}", p.len());
+            p
+        }
+        Err(e) => {
+            panic!("invalid program headers: {:?}", e);
+        }
+    };
+
+    // 4) Map segments into user space
+ info!("Mapping ELF segments...");
+match load_segments(&elf_bytes, hdr, phdrs, |vaddr, mem_size, file_bytes, flags| {
+    info!(
+        "segment: vaddr={:#x} mem_size={:#x} file_len={}",
+        vaddr, mem_size, file_bytes.len()
+    );
+    let r = crate::memory::map_user_segment(vaddr, mem_size, file_bytes, flags);
+    match &r {
+        Ok(()) => info!("segment mapped ok"),
+        Err(()) => info!("segment map FAILED"),
+    }
+    r
+}) {
+    Ok(()) => info!("All segments mapped"),
+    Err(e) => {
+        error!("load_segments failed: {:?}", e);
+        panic!("segment mapping failed: {:?}", e);
+    }
+}
+
+// 5) Build user stack
+let user_stack_top = match crate::memory::alloc_user_stack() {
+    Ok(s) => {
+        info!("user stack top: {:#x}", s);
+        s
+    }
+    Err(_) => {
+        panic!("failed to allocate user stack");
+    }
+};
+
+let entry = hdr.e_entry;
+
+
+info!("Entering user mode at entry={:#x}", entry);
+unsafe {
+    crate::memory::force_user_access(
+        VirtAddr::new(entry),
+        0xffff_8000_0000_0000,
+    );
+}
+unsafe { enter_user_mode(entry, user_stack_top) };
 
     // Optional: syscall harness, gated by existing feature
     #[cfg(feature = "syscall_tests")]
@@ -229,12 +395,13 @@ pub fn kernel_init(
     }
 
     info!("kernel_init: completed");
-    Ok(())
+    Ok(())   
+
 }
 
 
 
-
+}
 
 
 

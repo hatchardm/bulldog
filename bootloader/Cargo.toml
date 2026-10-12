@@ -4,9 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-x86_64 = "0.15"
-uefi = { version = "0.37.0", features = ["alloc", "logger", "global_allocator"] }
-uefi-raw = "0.14.0"
+x86_64 = { version = "0.15", default-features = false, features = ["instructions"] }
+uefi = { 
+    git = "https://github.com/rust-osdev/uefi-rs.git", 
+    branch = "main", 
+    features = ["panic_handler", "logger", "alloc", "global_allocator"] 
+}
 log = "0.4"
 boot-proto = { path = "../boot-proto" }
 xmas-elf = "0.8"

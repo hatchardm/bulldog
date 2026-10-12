@@ -107,6 +107,29 @@ unsafe impl FrameAllocator<Size4KiB> for BulldogFrameAllocator {
     }
 }
 
+
+pub unsafe fn init(boot_info: &mut BootInfo) {
+    let phys_offset = boot_info.physical_memory_offset;
+    let phys_offset_va = VirtAddr::new(phys_offset);
+
+    // Frame allocator (for later use)
+    let fa = BulldogFrameAllocator::new(boot_info);
+    FRAME_ALLOCATOR.lock().replace(fa);
+
+    // Mapper over the page tables the bootloader already installed
+    let mapper = new_offset_page_table(phys_offset_va);
+    MAPPER.lock().replace(mapper);
+
+    // Framebuffer is already reachable via HHDM – just record the virtual address
+    if boot_info.framebuffer_present != 0 {
+        boot_info.framebuffer_virt = (phys_offset_va + boot_info.framebuffer.addr).as_u64();
+    }
+
+    serial_println("paging::init finished (using bootloader maps)");
+}
+
+
+/* 
 pub unsafe fn init(boot_info: &mut BootInfo) {
     let phys_offset = boot_info.physical_memory_offset;
     let phys_offset_va = VirtAddr::new(phys_offset);
@@ -185,5 +208,5 @@ pub unsafe fn init(boot_info: &mut BootInfo) {
         boot_info.framebuffer_virt = (phys_offset_va + fb.addr).as_u64();
     }
 }
-
+*/
 

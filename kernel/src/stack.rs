@@ -29,3 +29,5 @@ pub struct Stack(pub [u8; STACK_SIZE]);
 /// reliable execution even if the main kernel stack is corrupted.
 pub static LAPIC_STACK: Stack = Stack([0; STACK_SIZE]);
 
+/// Kernel stack for TSS.RSP0 (ring3 → ring0: int 0x80, ordinary exceptions).
+pub static mut KERNEL_STACK: Stack = Stack([0; STACK_SIZE]);
