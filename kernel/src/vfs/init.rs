@@ -25,19 +25,21 @@ pub fn vfs_init() {
     let log_file = Box::new(MemFile::new(Vec::new()));
     let _ = vfs_create_file("/var/log/test_write.txt", log_file);
 
-    // Load /bin/hello from the FAT RAM disk into a MemFile
-    if let Some(bytes) = load_hello_from_fat() {
-        log::info!("VFS: registered /bin/hello ({} bytes)", bytes.len());
-        let hello = Box::new(MemFile::new(bytes));
-        let _ = vfs_create_file("/bin/hello", hello);
-    } else {
-        log::error!("VFS: failed to load /bin/hello from FAT");
+    // Load usermode binaries from FAT into MemFiles
+    for (name_83, vfs_path) in [("HELLO", "/bin/hello"), ("GOODBYE", "/bin/goodbye")] {
+        if let Some(bytes) = load_bin_from_fat(name_83) {
+            log::info!("VFS: registered {} ({} bytes)", vfs_path, bytes.len());
+            let file = Box::new(MemFile::new(bytes));
+            let _ = vfs_create_file(vfs_path, file);
+        } else {
+            log::error!("VFS: failed to load {} from FAT", vfs_path);
+        }
     }
 
     vfs_test_write();
 }
 
-/// Read BIN/HELLO from the FAT image already loaded by the bootloader.
+/// 8.3 name match: first 8 chars, space-padded, case-insensitive.
 fn name_starts_with_83(name: &[u8; 11], wanted: &str) -> bool {
     let w = wanted.as_bytes();
     if w.len() > 8 {
@@ -56,7 +58,8 @@ fn name_starts_with_83(name: &[u8; 11], wanted: &str) -> bool {
     true
 }
 
-fn load_hello_from_fat() -> Option<Vec<u8>> {
+/// Read `/BIN/<name_83>` from the FAT image (e.g. "HELLO", "GOODBYE").
+fn load_bin_from_fat(name_83: &str) -> Option<Vec<u8>> {
     let disk = RamDisk {
         phys_addr: crate::fat_phys_addr(),
         size: crate::fat_size(),
@@ -65,7 +68,7 @@ fn load_hello_from_fat() -> Option<Vec<u8>> {
     let bpb = fat::get_global_bpb();
     let fat_table = fat::get_global_fat();
 
-    // Root → find BIN
+    // Root → BIN
     let root = fat::read_directory(&disk, bpb, fat_table, bpb.root_cluster);
     let mut bin_cluster = None;
     for e in root.iter() {
@@ -76,20 +79,20 @@ fn load_hello_from_fat() -> Option<Vec<u8>> {
     }
     let bin_cluster = bin_cluster?;
 
-    // BIN → find HELLO
+    // BIN → file
     let bin = fat::read_directory(&disk, bpb, fat_table, bin_cluster);
-    let mut hello_cluster = None;
-    let mut hello_size = 0u32;
+    let mut file_cluster = None;
+    let mut file_size = 0u32;
     for e in bin.iter() {
-        if name_starts_with_83(&e.name, "HELLO") {
-            hello_cluster = Some(e.cluster());
-            hello_size = e.size;
+        if name_starts_with_83(&e.name, name_83) {
+            file_cluster = Some(e.cluster());
+            file_size = e.size;
             break;
         }
     }
-    let hello_cluster = hello_cluster?;
+    let file_cluster = file_cluster?;
 
-    fat::read_file(&disk, bpb, fat_table, hello_cluster, hello_size as usize).ok()
+    fat::read_file(&disk, bpb, fat_table, file_cluster, file_size as usize).ok()
 }
 
 pub fn vfs_test_write() {

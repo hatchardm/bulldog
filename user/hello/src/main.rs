@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use core::arch::naked_asm;
+use core::arch::asm;
 use core::panic::PanicInfo;
 
 #[panic_handler]
@@ -9,23 +9,47 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
+fn sys_write(fd: u64, buf: *const u8, len: u64) -> i64 {
+    let mut ret: u64;
+    unsafe {
+        asm!(
+            "int 0x80",
+            inlateout("rax") 1u64 => ret,
+            in("rdi") fd,
+            in("rsi") buf,
+            in("rdx") len,
+            options(nostack, preserves_flags)
+        );
+    }
+    ret as i64
+}
+
+fn sys_exit(code: u64) -> ! {
+    unsafe {
+        asm!(
+            "int 0x80",
+            in("rax") 2u64,
+            in("rdi") code,
+            options(noreturn, nostack)
+        );
+    }
+}
+
 #[unsafe(link_section = ".rodata")]
 static MSG: [u8; 22] = *b"Hello from User Space\n";
 
-#[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    naked_asm!(
-        "mov rbp, rsp",
-        "mov rax, 1",           // SYS_WRITE
-        "mov rdi, 1",           // fd = 1
-        "lea rsi, [rip + {msg}]",
-        "mov rdx, 22",          // len
-        "int 0x80",
-        "mov rax, 2",           // SYS_EXIT
-        "xor rdi, rdi",
-        "int 0x80",
-        "2: jmp 2b",
-        msg = sym MSG,
-    );
+    let msg_ptr: *const u8;
+    unsafe {
+        asm!(
+            "lea {}, [rip + {}]",
+            out(reg) msg_ptr,
+            sym MSG,
+            options(nostack, preserves_flags)
+        );
+    }
+    let _ = sys_write(1, msg_ptr, MSG.len() as u64);
+    sys_exit(0);
 }
+

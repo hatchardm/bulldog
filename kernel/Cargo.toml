@@ -36,6 +36,7 @@ default = []
 syscall_tests = []
 serial_log = []
 usermode_hello = []
+usermode_goodbye = []
 
 [profile.dev]
 opt-level = 0

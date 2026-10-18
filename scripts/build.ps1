@@ -10,12 +10,13 @@ Write-Host ""
 Write-Host "Select build mode:"
 Write-Host "  1) Normal build"
 Write-Host "  2) Build with serial logging"
-Write-Host "  3) Build with syscall tests"
-Write-Host "  4) Build with BOTH serial logging + syscall tests"
-Write-Host "  5) Build with usermode hello"
+Write-Host "  3) Build with syscall tests (EXIT_TO_IDLE off — harness continues)"
+Write-Host "  4) Build with BOTH serial logging + syscall tests (EXIT_TO_IDLE off)"
+Write-Host "  5) Build with usermode hello  (EXIT_TO_IDLE on — exit → kernel idle)"
+Write-Host "  6) Build with usermode goodbye  (EXIT_TO_IDLE on — exit → kernel idle)"
 Write-Host ""
 
-$choice = Read-Host "Enter choice (1-5)"
+$choice = Read-Host "Enter choice (1-6)"
 
 # Feature names only (no --features prefix)
 $features = ""
@@ -41,6 +42,11 @@ switch ($choice) {
         Write-Host "[mode] Usermode hello enabled"
         $features = "usermode_hello"
     }
+
+    "6" {
+        Write-Host "[mode] Usermode goodbye enabled"
+        $features = "usermode_goodbye"
+    }
     default {
         Write-Host "[mode] Invalid choice. Defaulting to normal build."
         $features = ""
@@ -63,6 +69,11 @@ cargo +nightly build -p kernel-bin --release --target x86_64-unknown-none `
 Write-Host "[build] Building hello..."
 $env:RUSTFLAGS = "-C relocation-model=static -C link-arg=--image-base=0x100000000 -C link-arg=-TC:\dev\bulldog\user\hello\linker.ld"
 cargo +nightly build -p hello --release --target x86_64-unknown-none `
+    -Z build-std=core,alloc
+
+Write-Host "[build] Building goodbye..."
+$env:RUSTFLAGS = "-C relocation-model=static -C link-arg=--image-base=0x100000000 -C link-arg=-TC:\dev\bulldog\user\goodbye\linker.ld"
+cargo +nightly build -p goodbye --release --target x86_64-unknown-none `
     -Z build-std=core,alloc
 Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue
 

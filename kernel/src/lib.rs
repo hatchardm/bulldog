@@ -289,79 +289,95 @@ pub fn kernel_init(
     init_fd_table_with_std();
     info!("FD table initialized");
 
-    // ------------------------------------------------------------------
-    // Option 5: usermode hello
-    // ------------------------------------------------------------------
-    #[cfg(feature = "usermode_hello")]
-    {
-        info!("Loading /bin/hello ELF");
+/// Load ELF from VFS, map it, arm exit→idle, enter ring 3. Does not return.
+#[cfg(any(feature = "usermode_hello", feature = "usermode_goodbye"))]
+fn run_usermode_elf(path: &str) -> ! {
+    info!("Loading {} ELF", path);
 
-        let elf_bytes = match crate::vfs::read_all("/bin/hello") {
-            Ok(b) => {
-                info!("read_all(/bin/hello) -> {} bytes", b.len());
-                b
-            }
-            Err(e) => {
-                error!("read_all(/bin/hello) failed: {:?}", e);
-                panic!("failed to read /bin/hello");
-            }
-        };
-
-        let hdr = unsafe { &*(elf_bytes.as_ptr() as *const Elf64_Ehdr) };
-        info!("ELF ident: {:02x?}", &hdr.e_ident[..4]);
-
-        if let Err(e) = validate_elf_header(hdr) {
-            panic!("invalid ELF header: {:?}", e);
+    let elf_bytes = match crate::vfs::read_all(path) {
+        Ok(b) => {
+            info!("read_all({}) -> {} bytes", path, b.len());
+            b
         }
-
-        let phdrs = match get_program_headers(&elf_bytes, hdr) {
-            Ok(p) => {
-                info!("program headers count: {}", p.len());
-                p
-            }
-            Err(e) => panic!("invalid program headers: {:?}", e),
-        };
-
-        info!("Mapping ELF segments...");
-        match load_segments(&elf_bytes, hdr, phdrs, |vaddr, mem_size, file_bytes, flags| {
-            info!(
-                "segment: vaddr={:#x} mem_size={:#x} file_len={}",
-                vaddr, mem_size, file_bytes.len()
-            );
-            let r = crate::memory::map_user_segment(vaddr, mem_size, file_bytes, flags);
-            match &r {
-                Ok(()) => info!("segment mapped ok"),
-                Err(()) => info!("segment map FAILED"),
-            }
-            r
-        }) {
-            Ok(()) => info!("All segments mapped"),
-            Err(e) => {
-                error!("load_segments failed: {:?}", e);
-                panic!("segment mapping failed: {:?}", e);
-            }
+        Err(e) => {
+            error!("read_all({}) failed: {:?}", path, e);
+            panic!("failed to read {}", path);
         }
+    };
 
-        let user_stack_top = match crate::memory::alloc_user_stack() {
-            Ok(s) => {
-                info!("user stack top: {:#x}", s);
-                s
-            }
-            Err(_) => panic!("failed to allocate user stack"),
-        };
+    let hdr = unsafe { &*(elf_bytes.as_ptr() as *const Elf64_Ehdr) };
+    info!("ELF ident: {:02x?}", &hdr.e_ident[..4]);
 
-        let entry = hdr.e_entry;
-        info!("Entering user mode at entry={:#x}", entry);
-
-        unsafe {
-            crate::memory::force_user_access(
-                VirtAddr::new(entry),
-                0xffff_8000_0000_0000,
-            );
-            enter_user_mode(entry, user_stack_top);
-        }
-        // does not return
+    if let Err(e) = validate_elf_header(hdr) {
+        panic!("invalid ELF header: {:?}", e);
     }
+
+    let phdrs = match get_program_headers(&elf_bytes, hdr) {
+        Ok(p) => {
+            info!("program headers count: {}", p.len());
+            p
+        }
+        Err(e) => panic!("invalid program headers: {:?}", e),
+    };
+
+    info!("Mapping ELF segments...");
+    match load_segments(&elf_bytes, hdr, phdrs, |vaddr, mem_size, file_bytes, flags| {
+        info!(
+            "segment: vaddr={:#x} mem_size={:#x} file_len={}",
+            vaddr, mem_size, file_bytes.len()
+        );
+        let r = crate::memory::map_user_segment(vaddr, mem_size, file_bytes, flags);
+        match &r {
+            Ok(()) => info!("segment mapped ok"),
+            Err(()) => info!("segment map FAILED"),
+        }
+        r
+    }) {
+        Ok(()) => info!("All segments mapped"),
+        Err(e) => {
+            error!("load_segments failed: {:?}", e);
+            panic!("segment mapping failed: {:?}", e);
+        }
+    }
+
+    let user_stack_top = match crate::memory::alloc_user_stack() {
+        Ok(s) => {
+            info!("user stack top: {:#x}", s);
+            s
+        }
+        Err(_) => panic!("failed to allocate user stack"),
+    };
+
+    let entry = hdr.e_entry;
+    info!("Entering user mode at entry={:#x}", entry);
+
+    crate::syscall::exit::arm_exit_to_idle();
+
+    unsafe {
+        crate::memory::force_user_access(
+            VirtAddr::new(entry),
+            0xffff_8000_0000_0000,
+        );
+        enter_user_mode(entry, user_stack_top);
+    }
+}
+
+// ------------------------------------------------------------------
+// Option 5: usermode hello
+// ------------------------------------------------------------------
+#[cfg(feature = "usermode_hello")]
+{
+    run_usermode_elf("/bin/hello");
+}
+
+// ------------------------------------------------------------------
+// Option 6: usermode goodbye
+// ------------------------------------------------------------------
+#[cfg(feature = "usermode_goodbye")]
+{
+    run_usermode_elf("/bin/goodbye");
+}
+
 
     // ------------------------------------------------------------------
     // Options 3 / 4: in-kernel syscall harness
@@ -378,7 +394,14 @@ pub fn kernel_init(
     Ok(())
 }
 
-
+pub fn kernel_idle_after_exit() -> ! {
+    info!("back in kernel idle after process exit");
+    loop {
+        unsafe {
+            core::arch::asm!("sti; hlt", options(nomem, nostack));
+        }
+    }
+}
 
 /// Disable legacy PIC by masking all IRQs.
 pub fn disable_pic() {

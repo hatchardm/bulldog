@@ -16,5 +16,6 @@ mmd -i $fat ::/bin
 
 Write-Host "[fat] Copying usermode programs..."
 mcopy -o -i $fat "$root\target\x86_64-unknown-none\release\hello" ::/bin/hello
+mcopy -o -i $fat "$root\target\x86_64-unknown-none\release\goodbye" ::/bin/goodbye
 
 Write-Host "[fat] FAT filesystem build complete."
