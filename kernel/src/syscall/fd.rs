@@ -122,5 +122,11 @@ pub fn fd_clear_all() {
     *guard = None;
 }
 
-
+/// Clear all FDs but keep the table initialized (for syscall harness).
+pub fn fd_reset_for_harness() {
+    let mut guard = FD_TABLE.lock();
+    if let Some(table) = guard.as_mut() {
+        table.clear();
+    }
+}
 

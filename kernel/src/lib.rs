@@ -289,10 +289,60 @@ pub fn kernel_init(
     init_fd_table_with_std();
     info!("FD table initialized");
 
-/// Load ELF from VFS, map it, arm exit→idle, enter ring 3. Does not return.
-#[cfg(any(feature = "usermode_hello", feature = "usermode_goodbye"))]
-fn run_usermode_elf(path: &str) -> ! {
+
+
+// ------------------------------------------------------------------
+// Option 5: usermode hello
+// ------------------------------------------------------------------
+#[cfg(feature = "usermode_hello")]
+{
+    run_usermode_elf("/bin/hello", true);
+}
+
+// ------------------------------------------------------------------
+// Option 6: usermode goodbye
+// ------------------------------------------------------------------
+#[cfg(feature = "usermode_goodbye")]
+{
+    run_usermode_elf("/bin/goodbye", true);
+}
+
+// ------------------------------------------------------------------
+// Option 7: hello then goodbye on exit
+// ------------------------------------------------------------------
+#[cfg(feature = "usermode_chain")]
+{
+    run_usermode_elf("/bin/hello", false); // false → arm chain to goodbye
+}
+
+
+    // ------------------------------------------------------------------
+    // Options 3 / 4: in-kernel syscall harness
+    // (must be outside the usermode block)
+    // ------------------------------------------------------------------
+    #[cfg(feature = "syscall_tests")]
+    {
+        info!("Running syscall harness");
+        crate::tests::syscall_harness::run_syscall_tests();
+        info!("Syscall harness completed");
+    }
+
+    info!("kernel_init: completed");
+    Ok(())
+}
+
+/// Load ELF from VFS, map it, arm after-exit policy, enter ring 3. Does not return.
+#[cfg(any(
+    feature = "usermode_hello",
+    feature = "usermode_goodbye",
+    feature = "usermode_chain"
+))]
+pub fn run_usermode_elf(path: &str, idle_after_exit: bool) -> ! {
     info!("Loading {} ELF", path);
+
+    // Re-init FDs for this process (needed on chain after sys_exit cleared them)
+    init_fd_table_with_std();
+    // ensure stdout (fd 1) is wired the same way as before first enter
 
     let elf_bytes = match crate::vfs::read_all(path) {
         Ok(b) => {
@@ -351,7 +401,11 @@ fn run_usermode_elf(path: &str) -> ! {
     let entry = hdr.e_entry;
     info!("Entering user mode at entry={:#x}", entry);
 
-    crate::syscall::exit::arm_exit_to_idle();
+    if idle_after_exit {
+        crate::syscall::exit::arm_exit_to_idle();
+    } else {
+        crate::syscall::exit::arm_exit_chain_goodbye();
+    }
 
     unsafe {
         crate::memory::force_user_access(
@@ -360,38 +414,6 @@ fn run_usermode_elf(path: &str) -> ! {
         );
         enter_user_mode(entry, user_stack_top);
     }
-}
-
-// ------------------------------------------------------------------
-// Option 5: usermode hello
-// ------------------------------------------------------------------
-#[cfg(feature = "usermode_hello")]
-{
-    run_usermode_elf("/bin/hello");
-}
-
-// ------------------------------------------------------------------
-// Option 6: usermode goodbye
-// ------------------------------------------------------------------
-#[cfg(feature = "usermode_goodbye")]
-{
-    run_usermode_elf("/bin/goodbye");
-}
-
-
-    // ------------------------------------------------------------------
-    // Options 3 / 4: in-kernel syscall harness
-    // (must be outside the usermode block)
-    // ------------------------------------------------------------------
-    #[cfg(feature = "syscall_tests")]
-    {
-        info!("Running syscall harness");
-        crate::tests::syscall_harness::run_syscall_tests();
-        info!("Syscall harness completed");
-    }
-
-    info!("kernel_init: completed");
-    Ok(())
 }
 
 pub fn kernel_idle_after_exit() -> ! {

@@ -1,5 +1,4 @@
 # scripts/build.ps1
-# scripts/build.ps1
 $root = Split-Path $PSScriptRoot -Parent
 
 Write-Host ""
@@ -10,13 +9,14 @@ Write-Host ""
 Write-Host "Select build mode:"
 Write-Host "  1) Normal build"
 Write-Host "  2) Build with serial logging"
-Write-Host "  3) Build with syscall tests (EXIT_TO_IDLE off — harness continues)"
-Write-Host "  4) Build with BOTH serial logging + syscall tests (EXIT_TO_IDLE off)"
-Write-Host "  5) Build with usermode hello  (EXIT_TO_IDLE on — exit → kernel idle)"
-Write-Host "  6) Build with usermode goodbye  (EXIT_TO_IDLE on — exit → kernel idle)"
+Write-Host "  3) Build with syscall tests (no exit-to-idle — harness continues)"
+Write-Host "  4) Build with BOTH serial logging + syscall tests"
+Write-Host "  5) Usermode hello   (exit → kernel idle)"
+Write-Host "  6) Usermode goodbye (exit → kernel idle)"
+Write-Host "  7) Usermode chain   (hello → goodbye → idle)"
 Write-Host ""
 
-$choice = Read-Host "Enter choice (1-6)"
+$choice = Read-Host "Enter choice (1-7)"
 
 # Feature names only (no --features prefix)
 $features = ""
@@ -42,10 +42,13 @@ switch ($choice) {
         Write-Host "[mode] Usermode hello enabled"
         $features = "usermode_hello"
     }
-
     "6" {
         Write-Host "[mode] Usermode goodbye enabled"
         $features = "usermode_goodbye"
+    }
+    "7" {
+        Write-Host "[mode] Usermode chain (hello → goodbye) enabled"
+        $features = "usermode_chain"
     }
     default {
         Write-Host "[mode] Invalid choice. Defaulting to normal build."
@@ -53,7 +56,6 @@ switch ($choice) {
     }
 }
 
-# Helper: extra args for cargo when features are set
 $featureArgs = @()
 if ($features -ne "") {
     $featureArgs = @("--features", $features)

@@ -4,6 +4,7 @@ members = [
     "kernel-bin",
     "bootloader",
     "boot-proto",
+    "user/user_lib",
     "user/hello",
     "user/goodbye"
 ]

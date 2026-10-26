@@ -37,6 +37,7 @@ syscall_tests = []
 serial_log = []
 usermode_hello = []
 usermode_goodbye = []
+usermode_chain = []
 
 [profile.dev]
 opt-level = 0
