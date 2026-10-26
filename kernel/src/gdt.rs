@@ -5,7 +5,7 @@ use spin::Mutex;
 use x86_64::structures::gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector};
 use x86_64::structures::tss::TaskStateSegment;
 use x86_64::VirtAddr;
-use crate::stack::{STACK, LAPIC_STACK};
+use crate::stack::{STACK, LAPIC_STACK, KERNEL_STACK};
 
 /// IST index for the double-fault handler.
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
@@ -33,23 +33,29 @@ static SELECTORS: Mutex<Option<Selectors>> = Mutex::new(None);
 pub fn init() {
     use x86_64::instructions::segmentation::{CS, DS, ES, SS, Segment};
     use x86_64::instructions::tables::load_tss;
+    use x86_64::VirtAddr;
 
     //
-    // 1. Build TSS with IST stacks
+    // 1. Build TSS with IST stacks + RSP0
     //
     let mut tss = TaskStateSegment::new();
 
-    // Double fault stack: use end address as top of stack.
+    // Double-fault stack
     let df_stack_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(STACK.0) });
     let df_stack_end = df_stack_start + STACK_SIZE;
     tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = df_stack_end;
 
-    // LAPIC/IST stack: used for page fault and LAPIC timer handlers.
+    // LAPIC / page-fault IST stack
     let lapic_stack_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(LAPIC_STACK.0) });
     let lapic_stack_end = lapic_stack_start + STACK_SIZE;
     tss.interrupt_stack_table[LAPIC_IST_INDEX as usize] = lapic_stack_end;
 
-    // Leak TSS to get a true 'static reference (safe: one-time kernel object).
+    // RSP0: kernel stack for ring3 → ring0 (int 0x80, ordinary exceptions)
+    let rsp0_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(KERNEL_STACK.0) });
+    let rsp0_end = rsp0_start + STACK_SIZE;
+    tss.privilege_stack_table[0] = rsp0_end;
+
+    // Leak TSS to get a true 'static reference (one-time kernel object).
     let tss_static: &'static TaskStateSegment = Box::leak(Box::new(tss));
 
     //
@@ -59,9 +65,8 @@ pub fn init() {
 
     let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
     let data_selector = gdt.add_entry(Descriptor::kernel_data_segment());
-    let tss_selector  = gdt.add_entry(Descriptor::tss_segment(tss_static));
+    let tss_selector = gdt.add_entry(Descriptor::tss_segment(tss_static));
 
-    // User-mode segments (for future syscall/userspace work)
     let user_code_selector = gdt.add_entry(Descriptor::user_code_segment());
     let user_data_selector = gdt.add_entry(Descriptor::user_data_segment());
 
@@ -74,7 +79,7 @@ pub fn init() {
     };
 
     //
-    // 3. Leak GDT to get a 'static reference and load it
+    // 3. Leak GDT and load it
     //
     let gdt_static: &'static GlobalDescriptorTable = Box::leak(Box::new(gdt));
     gdt_static.load();

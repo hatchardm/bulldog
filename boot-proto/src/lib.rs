@@ -15,6 +15,11 @@ pub struct BootInfo {
     pub kernel_phys_end: u64,
     pub kernel_entry_phys: u64,
     pub framebuffer_virt: u64,
+     /// Physical address of the FAT disk image in RAM.
+    pub fat_phys_addr: u64,
+
+    /// Size of the FAT disk image in bytes.
+    pub fat_size: u64,
 
 }
 

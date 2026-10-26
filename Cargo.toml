@@ -4,6 +4,9 @@ members = [
     "kernel-bin",
     "bootloader",
     "boot-proto",
+    "user/user_lib",
+    "user/hello",
+    "user/goodbye"
 ]
 
 resolver = "2"

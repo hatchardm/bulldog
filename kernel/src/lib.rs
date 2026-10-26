@@ -28,7 +28,7 @@ use x86_64::{
     PhysAddr, VirtAddr,
     structures::paging::{
         mapper::MapToError, mapper::Mapper, FrameAllocator, Page, PageTableFlags,
-        PhysFrame, Size4KiB, Translate,
+        PhysFrame, Size4KiB, Size1GiB, Translate,
     },
 };
 
@@ -64,6 +64,7 @@ pub mod user_mode;
 pub mod text;
 pub mod font8x16;
 pub mod paging;
+pub mod fs;
 
 #[cfg(feature = "syscall_tests")]
 mod tests;
@@ -80,13 +81,30 @@ use crate::framebuffer::KernelFramebuffer;
 use crate::framebuffer::PixelFormat;
 use crate::paging::{MAPPER, FRAME_ALLOCATOR};
 use crate::allocator::init_heap;
+use crate::elf::types::Elf64_Ehdr;
+use crate::elf::loader::{validate_elf_header, get_program_headers, load_segments};
+use crate::user_mode::enter_user_mode;
 
+static mut FAT_ADDR: u64 = 0;
+static mut FAT_SIZE: u64 = 0;
 
+pub fn fat_phys_addr() -> u64 {
+    unsafe { FAT_ADDR }
+}
+
+pub fn fat_size() -> u64 {
+    unsafe { FAT_SIZE }
+}
 
 
 #[unsafe(no_mangle)]
 pub fn kernel_main(boot_info: &mut BootInfo) -> ! {
     serial_println("Entered kernel_main");
+    unsafe {
+    FAT_ADDR = boot_info.fat_phys_addr;
+    FAT_SIZE = boot_info.fat_size;
+}
+
 
     // 🎨 Framebuffer setup
     let mut fb = KernelFramebuffer::from_bootinfo(boot_info);
@@ -148,7 +166,6 @@ match kernel_init(memory_regions, phys_mem_offset) {
 }
 
 
-
 /// Kernel initialization routine.
 ///
 /// - Disables legacy PIC.
@@ -158,25 +175,72 @@ match kernel_init(memory_regions, phys_mem_offset) {
 /// - Maps LAPIC MMIO and IST stack.
 /// - Configures APIC and enables interrupts.
 ///
-/// Returns `Ok(())` if initialization succeeds, or a `MapToError` if paging fails.
-/// 
+/// Optional (features):
+/// - `usermode_hello`  → load /bin/hello and enter ring 3
+/// - `syscall_tests`   → run in-kernel syscall harness
 pub fn kernel_init(
     memory_regions: &'static [MemoryRegion],
     phys_mem_offset: VirtAddr,
 ) -> Result<(), ()> {
     info!("kernel_init: starting");
 
-    // ... existing memory map + HHDM logging ...
-
     // Heap
-    let mut mapper_guard = MAPPER.lock();
-    let mapper = mapper_guard.as_mut().expect("MAPPER not initialized");
+    {
+        let mut mapper_guard = MAPPER.lock();
+        let mapper = mapper_guard.as_mut().expect("MAPPER not initialized");
 
-    let mut fa_guard = FRAME_ALLOCATOR.lock();
-    let fa = fa_guard.as_mut().expect("FRAME_ALLOCATOR not initialized");
-    info!("Initializing Heap");
-    init_heap(mapper, fa).expect("init_heap failed");
-    info!("Heap initialized");
+        let mut fa_guard = FRAME_ALLOCATOR.lock();
+        let fa = fa_guard.as_mut().expect("FRAME_ALLOCATOR not initialized");
+
+        info!("Initializing Heap");
+        init_heap(mapper, fa).expect("init_heap failed");
+        info!("Heap initialized");
+    }
+
+    // FAT32 (heap ready)
+    info!("Initializing FAT32 RamDisk");
+
+    let disk = crate::fs::block::RamDisk {
+        phys_addr: unsafe { FAT_ADDR },
+        size: unsafe { FAT_SIZE },
+    };
+
+    info!(
+        "FAT RamDisk: phys={:#x}, size={} bytes",
+        disk.phys_addr, disk.size
+    );
+
+    let bpb = crate::fs::fat::FatBpb::read(&disk);
+    info!(
+        "BPB: bytes_per_sector={} sectors_per_cluster={} reserved_sectors={} num_fats={} fat_size_sectors={} root_cluster={}",
+        bpb.bytes_per_sector,
+        bpb.sectors_per_cluster,
+        bpb.reserved_sectors,
+        bpb.num_fats,
+        bpb.fat_size_sectors,
+        bpb.root_cluster
+    );
+
+    let fat = crate::fs::fat::FatTable::read(&disk, &bpb);
+    info!("FAT table loaded: {} entries", fat.entries.len());
+
+    crate::fs::fat::set_global_fat(bpb, fat);
+    info!("FAT32 initialized");
+
+    let bpb = crate::fs::fat::get_global_bpb();
+    let fat = crate::fs::fat::get_global_fat();
+    let disk = crate::fs::block::RamDisk {
+        phys_addr: unsafe { FAT_ADDR },
+        size: unsafe { FAT_SIZE },
+    };
+
+    let root_entries =
+        crate::fs::fat::read_directory(&disk, bpb, fat, bpb.root_cluster);
+    info!("Root directory entries:");
+    for e in root_entries.iter() {
+        let name = core::str::from_utf8(&e.name).unwrap_or("???");
+        info!("  {}  cluster={}  size={}", name, e.cluster(), e.size);
+    }
 
     // GDT / TSS
     info!("Initializing GDT/TSS");
@@ -198,29 +262,64 @@ pub fn kernel_init(
     crate::syscall::init_syscall();
     info!("Syscall handler ready");
 
-    // LAPIC + APIC
-    info!("Mapping LAPIC MMIO");
-    map_lapic_mmio(mapper, fa);
-    info!("LAPIC MMIO mapped");
+    // LAPIC MMIO
+    {
+        let mut mapper_guard = MAPPER.lock();
+        let mapper = mapper_guard.as_mut().expect("MAPPER not initialized");
+
+        let mut fa_guard = FRAME_ALLOCATOR.lock();
+        let fa = fa_guard.as_mut().expect("FRAME_ALLOCATOR not initialized");
+
+        info!("Mapping LAPIC MMIO");
+        map_lapic_mmio(mapper, fa);
+        info!("LAPIC MMIO mapped");
+    }
 
     info!("Setting up APIC");
     apic::setup_apic();
     info!("APIC setup complete");
 
-    // Enable interrupts
     info!("Enabling Interrupts");
     x86_64::instructions::interrupts::enable();
     info!("Interrupts Enabled");
 
-    // VFS init (creates /etc/hostname, /var/log/test_write.txt)
     vfs_init();
     info!("VFS initialized");
 
-    // FD table init with stdin/stdout/stderr
     init_fd_table_with_std();
     info!("FD table initialized");
 
-    // Optional: syscall harness, gated by existing feature
+
+
+// ------------------------------------------------------------------
+// Option 5: usermode hello
+// ------------------------------------------------------------------
+#[cfg(feature = "usermode_hello")]
+{
+    run_usermode_elf("/bin/hello", true);
+}
+
+// ------------------------------------------------------------------
+// Option 6: usermode goodbye
+// ------------------------------------------------------------------
+#[cfg(feature = "usermode_goodbye")]
+{
+    run_usermode_elf("/bin/goodbye", true);
+}
+
+// ------------------------------------------------------------------
+// Option 7: hello then goodbye on exit
+// ------------------------------------------------------------------
+#[cfg(feature = "usermode_chain")]
+{
+    run_usermode_elf("/bin/hello", false); // false → arm chain to goodbye
+}
+
+
+    // ------------------------------------------------------------------
+    // Options 3 / 4: in-kernel syscall harness
+    // (must be outside the usermode block)
+    // ------------------------------------------------------------------
     #[cfg(feature = "syscall_tests")]
     {
         info!("Running syscall harness");
@@ -232,142 +331,99 @@ pub fn kernel_init(
     Ok(())
 }
 
+/// Load ELF from VFS, map it, arm after-exit policy, enter ring 3. Does not return.
+#[cfg(any(
+    feature = "usermode_hello",
+    feature = "usermode_goodbye",
+    feature = "usermode_chain"
+))]
+pub fn run_usermode_elf(path: &str, idle_after_exit: bool) -> ! {
+    info!("Loading {} ELF", path);
 
+    // Re-init FDs for this process (needed on chain after sys_exit cleared them)
+    init_fd_table_with_std();
+    // ensure stdout (fd 1) is wired the same way as before first enter
 
-
-
-
-
- 
-/* 
-pub fn kernel_init(
-    memory_regions: &'static [MemoryRegion],   // ← updated
-    phys_mem_offset: VirtAddr,
-) -> Result<(), MapToError<Size4KiB>> {
-    use crate::{gdt, interrupts, memory, stack};
-
-    disable_pic();
-    info!("Creating mapper");
-    let mut mapper = unsafe { init_offset_page_table(phys_mem_offset) };
-
-    // Log memory regions directly
-    for region in memory_regions.iter() {
-        debug!(
-            "Region: start={:#x}, end={:#x}, kind={:?}",
-            region.start, region.end, region.kind,
-        );
-    }
-
-    info!("Creating pre-heap frame allocator");
-    let (temp_frames, memory_map) = unsafe { BootInfoFrameAllocator::init_temp(memory_regions) };
-
-    let mut temp_allocator = PreHeapAllocator {
-        memory_map,
-        frames: temp_frames,
-        next: 0,
+    let elf_bytes = match crate::vfs::read_all(path) {
+        Ok(b) => {
+            info!("read_all({}) -> {} bytes", path, b.len());
+            b
+        }
+        Err(e) => {
+            error!("read_all({}) failed: {:?}", path, e);
+            panic!("failed to read {}", path);
+        }
     };
 
-    info!("Initializing heap");
-    allocator::init_heap(&mut mapper, &mut temp_allocator).expect("Heap initialization failed");
-    info!("Heap initialized");
+    let hdr = unsafe { &*(elf_bytes.as_ptr() as *const Elf64_Ehdr) };
+    info!("ELF ident: {:02x?}", &hdr.e_ident[..4]);
 
-    init_fd_table_with_std();
+    if let Err(e) = validate_elf_header(hdr) {
+        panic!("invalid ELF header: {:?}", e);
+    }
 
-    info!("Finalizing frame allocator from temp allocator");
-    let frames = temp_allocator.into_vec();
-    let mut frame_allocator = BootInfoFrameAllocator::new(memory_map, frames);
-    info!("Frame allocator ready");
+    let phdrs = match get_program_headers(&elf_bytes, hdr) {
+        Ok(p) => {
+            info!("program headers count: {}", p.len());
+            p
+        }
+        Err(e) => panic!("invalid program headers: {:?}", e),
+    };
 
-    debug!("Logging memory regions with virt addresses");
-    for region in memory_regions.iter() {
-        let virt = VirtAddr::new(region.start + phys_mem_offset.as_u64());
-        debug!(
-            "Region: start={:#x}, virt={:#x}, type={:?}",
-            region.start, virt, region.kind
+    info!("Mapping ELF segments...");
+    match load_segments(&elf_bytes, hdr, phdrs, |vaddr, mem_size, file_bytes, flags| {
+        info!(
+            "segment: vaddr={:#x} mem_size={:#x} file_len={}",
+            vaddr, mem_size, file_bytes.len()
         );
-    }
-
-    // Core CPU tables
-    gdt::init();
-    interrupts::init_idt();
-
-    // Syscall handler
-    crate::syscall::init_syscall();
-    info!("Syscall handler ready");
-
-    #[cfg(feature = "syscall_tests")]
-    {
-        vfs_init();
-        tests::syscall_harness::run_syscall_tests();
-    }
-
-    // APIC MMIO mapping
-    info!("Mapping LAPIC MMIO");
-    map_lapic_mmio(&mut mapper, &mut frame_allocator);
-
-    // APIC IST stack mapping
-    info!("Mapping LAPIC IST stack");
-    let lapic_stack_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(stack::LAPIC_STACK.0) });
-    let lapic_stack_end = lapic_stack_start + gdt::STACK_SIZE;
-    let lapic_stack_range = Page::range_inclusive(
-        Page::containing_address(lapic_stack_start),
-        Page::containing_address(lapic_stack_end - 1u64),
-    );
-
-    frame_allocator.mark_used_frames();
-
-    for frame in frame_allocator.allocated.iter_used_frames() {
-        debug!("Used frame: {:#x}", frame.start_address().as_u64());
-    }
-
-    info!("Pre-mark LAPIC stack frames");
-    for page in lapic_stack_range.clone() {
-        if let Some(phys) = mapper.translate_addr(page.start_address()) {
-            let frame = PhysFrame::containing_address(phys);
-            frame_allocator.allocated.mark_used(frame);
-        } else {
-            error!("LAPIC stack page not mapped: {:?}", page.start_address());
+        let r = crate::memory::map_user_segment(vaddr, mem_size, file_bytes, flags);
+        match &r {
+            Ok(()) => info!("segment mapped ok"),
+            Err(()) => info!("segment map FAILED"),
+        }
+        r
+    }) {
+        Ok(()) => info!("All segments mapped"),
+        Err(e) => {
+            error!("load_segments failed: {:?}", e);
+            panic!("segment mapping failed: {:?}", e);
         }
     }
 
-    debug!("LAPIC stack range: virt={:#x} - {:#x}", lapic_stack_start, lapic_stack_end);
-    for page in lapic_stack_range {
-        match mapper.translate_addr(page.start_address()) {
-            Some(phys) => {
-                let frame = PhysFrame::containing_address(phys);
-                let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
-
-                debug!("Ensure flags: remapping page {:?}", page.start_address());
-                unsafe {
-                    mapper.unmap(page)
-                        .map_err(|_| MapToError::FrameAllocationFailed)?
-                        .1
-                        .flush();
-
-                    mapper.map_to(page, frame, flags, &mut frame_allocator)?.flush();
-                }
-            }
-            None => {
-                error!(
-                    "No translation for LAPIC stack page {:?}; supply a backing PhysFrame from allocator",
-                    page.start_address()
-                );
-            }
+    let user_stack_top = match crate::memory::alloc_user_stack() {
+        Ok(s) => {
+            info!("user stack top: {:#x}", s);
+            s
         }
+        Err(_) => panic!("failed to allocate user stack"),
+    };
+
+    let entry = hdr.e_entry;
+    info!("Entering user mode at entry={:#x}", entry);
+
+    if idle_after_exit {
+        crate::syscall::exit::arm_exit_to_idle();
+    } else {
+        crate::syscall::exit::arm_exit_chain_goodbye();
     }
 
-    setup_apic();
-
-    let count = lapic_read(LapicRegister::CURRENT_COUNT);
-    info!("LAPIC CURRENT COUNT: {}", count);
-
-    info!("Enabling interrupts");
-    x86_64::instructions::interrupts::enable();
-    info!("Exiting init");
-
-    Ok(())
+    unsafe {
+        crate::memory::force_user_access(
+            VirtAddr::new(entry),
+            0xffff_8000_0000_0000,
+        );
+        enter_user_mode(entry, user_stack_top);
+    }
 }
-*/
+
+pub fn kernel_idle_after_exit() -> ! {
+    info!("back in kernel idle after process exit");
+    loop {
+        unsafe {
+            core::arch::asm!("sti; hlt", options(nomem, nostack));
+        }
+    }
+}
 
 /// Disable legacy PIC by masking all IRQs.
 pub fn disable_pic() {

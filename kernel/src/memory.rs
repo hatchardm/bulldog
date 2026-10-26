@@ -4,7 +4,7 @@ use x86_64::{
     PhysAddr, VirtAddr,
     structures::paging::{
         FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags,
-        PhysFrame, Size4KiB,
+        PhysFrame, Size4KiB, Size1GiB, Translate,
     },
     registers::control::Cr3,
 };
@@ -19,6 +19,10 @@ use crate::apic::LAPIC_VIRT_BASE;
 use crate::elf::loader::{SegmentFlags, ElfError};
 use crate::elf::types::Elf64_Ehdr;
 use crate::elf::loader::{validate_elf_header, get_program_headers, load_segments};
+use crate::MAPPER;
+use crate::FRAME_ALLOCATOR;
+
+
 
 /// Same safety requirements as `init`.
 unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut PageTable {
@@ -331,7 +335,7 @@ pub fn map_lapic_mmio(
 }
 
 pub fn map_page(
-    mapper: &mut impl Mapper<Size4KiB>,
+    mapper: &mut (impl Mapper<Size4KiB> + Translate),
     virt: VirtAddr,
     phys: PhysAddr,
     flags: PageTableFlags,
@@ -339,6 +343,12 @@ pub fn map_page(
 ) {
     let page = Page::containing_address(virt);
     let frame = PhysFrame::containing_address(phys);
+
+    // Already mapped (e.g. identity / huge page)?
+    if mapper.translate_addr(virt).is_some() {
+        let _ = unsafe { mapper.update_flags(page, flags) };
+        return;
+    }
 
     unsafe {
         mapper
@@ -358,46 +368,112 @@ pub fn find_unused_frame(allocator: &FrameBitmap) -> Option<PhysFrame> {
 }
 
 pub fn map_elf_segment(
-    mapper: &mut impl Mapper<Size4KiB>,
+    mapper: &mut (impl Mapper<Size4KiB> + Translate),
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
     vaddr_start: u64,
     mem_size: usize,
     file_bytes: &[u8],
     flags: &SegmentFlags,
 ) -> Result<(), ElfError> {
+    const HHDM: u64 = 0xffff_8000_0000_0000;
+
     let start = VirtAddr::new(vaddr_start);
-    let end   = start + (mem_size as u64).saturating_sub(1);
+    let end = start + (mem_size as u64).saturating_sub(1);
     let start_page = Page::containing_address(start);
-    let end_page   = Page::containing_address(end);
+    let end_page = Page::containing_address(end);
 
-    let mut page_flags = PageTableFlags::PRESENT;
-    if flags.writable   { page_flags |= PageTableFlags::WRITABLE; }
-    if !flags.executable { page_flags |= PageTableFlags::NO_EXECUTE; }
+    // Always WRITABLE while loading so PTEs accept data; USER for ring 3 later.
+    // SMAP-safe path: we still copy via HHDM, not through the user VA.
+let mut page_flags = PageTableFlags::PRESENT
+    | PageTableFlags::USER_ACCESSIBLE
+    | PageTableFlags::WRITABLE;
+if !flags.executable {
+    page_flags |= PageTableFlags::NO_EXECUTE;
+}
 
-    for page in Page::range_inclusive(start_page, end_page) {
-        let frame = frame_allocator
-            .allocate_frame()
-            .ok_or(ElfError::BadPhSize)?;
+let parent_flags = PageTableFlags::PRESENT
+    | PageTableFlags::WRITABLE
+    | PageTableFlags::USER_ACCESSIBLE;
+
+for page in Page::range_inclusive(start_page, end_page) {
+    if mapper.translate_addr(page.start_address()).is_some() {
+        continue;
+    }
+
+    let frame = frame_allocator
+        .allocate_frame()
+        .ok_or(ElfError::BadPhSize)?;
+
+    unsafe {
+        mapper
+            .map_to_with_table_flags(
+                page,
+                frame,
+                page_flags,
+                parent_flags,
+                frame_allocator,
+            )
+            .map_err(|_| ElfError::BadPhSize)?
+            .flush();
+    }
+}
+
+    // Copy file bytes through HHDM (phys), not the user virtual address
+    let mut copied = 0usize;
+    let mut va = vaddr_start;
+    while copied < file_bytes.len() {
+        let page_off = (va & 0xfff) as usize;
+        let chunk = core::cmp::min(4096 - page_off, file_bytes.len() - copied);
+
+        let phys = mapper
+            .translate_addr(VirtAddr::new(va))
+            .ok_or(ElfError::BadPhSize)?
+            .as_u64();
+
         unsafe {
-            mapper.map_to(page, frame, page_flags, frame_allocator)
-                .map_err(|_| ElfError::BadPhSize)?
-                .flush();
+            core::ptr::copy_nonoverlapping(
+                file_bytes.as_ptr().add(copied),
+                (HHDM + phys) as *mut u8,
+                chunk,
+            );
+        }
+
+        copied += chunk;
+        va += chunk as u64;
+    }
+
+    // Zero the BSS tail (mem_size > file_size) via HHDM as well
+    if mem_size > file_bytes.len() {
+        let mut zeroed = 0usize;
+        let mut va = vaddr_start + file_bytes.len() as u64;
+        let total = mem_size - file_bytes.len();
+
+        while zeroed < total {
+            let page_off = (va & 0xfff) as usize;
+            let chunk = core::cmp::min(4096 - page_off, total - zeroed);
+
+            let phys = mapper
+                .translate_addr(VirtAddr::new(va))
+                .ok_or(ElfError::BadPhSize)?
+                .as_u64();
+
+            unsafe {
+                core::ptr::write_bytes((HHDM + phys) as *mut u8, 0, chunk);
+            }
+
+            zeroed += chunk;
+            va += chunk as u64;
         }
     }
 
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            file_bytes.as_ptr(),
-            start.as_mut_ptr(),
-            file_bytes.len(),
-        );
-    }
-
-    if mem_size > file_bytes.len() {
-        let zero_start = start + file_bytes.len() as u64;
-        let zero_len   = mem_size - file_bytes.len();
-        unsafe {
-            core::ptr::write_bytes(zero_start.as_mut_ptr::<u8>(), 0, zero_len);
+    // Optional: drop WRITABLE on non-writable segments after load
+    if !flags.writable {
+        let mut ro_flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
+        if !flags.executable {
+            ro_flags |= PageTableFlags::NO_EXECUTE;
+        }
+        for page in Page::range_inclusive(start_page, end_page) {
+            let _ = unsafe { mapper.update_flags(page, ro_flags) };
         }
     }
 
@@ -405,7 +481,7 @@ pub fn map_elf_segment(
 }
 
 pub fn load_elf_into_address_space(
-    mapper: &mut impl Mapper<Size4KiB>,
+    mapper: &mut (impl Mapper<Size4KiB> + Translate),
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
     elf_data: &[u8],
 ) -> Result<u64, ElfError> {
@@ -422,4 +498,153 @@ pub fn load_elf_into_address_space(
     })?;
 
     Ok(hdr.e_entry)
+}
+
+pub fn map_user_segment(
+    vaddr: u64,
+    mem_size: usize,
+    file_bytes: &[u8],
+    flags: &crate::elf::loader::SegmentFlags,
+) -> Result<(), ()> {
+    info!("map_user_segment enter vaddr={:#x}", vaddr);
+    let mut mapper_guard = MAPPER.lock();
+    let mapper = mapper_guard.as_mut().unwrap();
+
+    let mut fa_guard = FRAME_ALLOCATOR.lock();
+    let fa = fa_guard.as_mut().unwrap();
+
+    map_elf_segment(mapper, fa, vaddr, mem_size, file_bytes, flags)
+        .map_err(|_| ())
+}
+
+
+pub fn map_user_page(
+    mapper: &mut (impl Mapper<Size4KiB> + Translate),
+    fa: &mut impl FrameAllocator<Size4KiB>,
+    vaddr: u64,
+) -> Result<(), ()> {
+    let virt = VirtAddr::new(vaddr);
+
+    // Allocate a physical frame
+    let frame = fa.allocate_frame().ok_or(())?;
+
+    // Usermode page flags
+    let flags = PageTableFlags::PRESENT
+        | PageTableFlags::WRITABLE
+        | PageTableFlags::USER_ACCESSIBLE;
+
+    map_page(mapper, virt, frame.start_address(), flags, fa);
+    Ok(())
+}
+
+pub fn alloc_user_stack() -> Result<u64, ()> {
+    let stack_size: usize = 64 * 1024;
+    let base: u64 = 0x0000_7FFF_FF00_0000;
+    let top = base + stack_size as u64;
+
+    let mut mapper_guard = MAPPER.lock();
+    let mapper = mapper_guard.as_mut().unwrap();
+    let mut fa_guard = FRAME_ALLOCATOR.lock();
+    let fa = fa_guard.as_mut().unwrap();
+
+    for offset in (0..stack_size).step_by(4096) {
+        map_user_page(mapper, fa, base + offset as u64)?;
+    }
+
+    Ok(top) // no force_user_access
+}
+
+
+    
+/// Set USER_ACCESSIBLE (and clear NX) on every level of the page walk for `vaddr`.
+/// Used so ring 3 can execute/read mappings whose parent tables were created
+/// without the U/S bit.
+pub unsafe fn force_user_access(vaddr: VirtAddr, phys_offset: u64) {
+    use x86_64::registers::control::Cr3;
+    use x86_64::structures::paging::PageTable;
+    use x86_64::structures::paging::page_table::PageTableFlags as Ptf;
+
+    let (cr3_frame, _) = Cr3::read();
+    let mut table_phys = cr3_frame.start_address().as_u64();
+    let va = vaddr.as_u64();
+
+    let i4 = ((va >> 39) & 0x1ff) as usize;
+    let i3 = ((va >> 30) & 0x1ff) as usize;
+    let i2 = ((va >> 21) & 0x1ff) as usize;
+    let i1 = ((va >> 12) & 0x1ff) as usize;
+
+    let userish = Ptf::PRESENT | Ptf::WRITABLE | Ptf::USER_ACCESSIBLE;
+
+    // PML4
+    let pml4 = &mut *((phys_offset + table_phys) as *mut PageTable);
+    let e4 = &mut pml4[i4];
+    if e4.is_unused() {
+        log::error!("force_user_access: PML4 empty");
+        return;
+    }
+    {
+        let mut f = e4.flags() | userish;
+        f.remove(Ptf::NO_EXECUTE);
+        e4.set_flags(f);
+    }
+    table_phys = e4.addr().as_u64();
+
+    // PDPT
+    let pdpt = &mut *((phys_offset + table_phys) as *mut PageTable);
+    let e3 = &mut pdpt[i3];
+    if e3.is_unused() {
+        log::error!("force_user_access: PDPT empty");
+        return;
+    }
+    if e3.flags().contains(Ptf::HUGE_PAGE) {
+        let mut f = e3.flags() | userish;
+        f.remove(Ptf::NO_EXECUTE);
+        e3.set_flags(f);
+        log::info!("force_user_access: USER on PML4 + 1GiB PDPT");
+        core::arch::asm!("invlpg [{}]", in(reg) va, options(nostack, preserves_flags));
+        return;
+    }
+    {
+        let mut f = e3.flags() | userish;
+        f.remove(Ptf::NO_EXECUTE);
+        e3.set_flags(f);
+    }
+    table_phys = e3.addr().as_u64();
+
+    // PD
+    let pd = &mut *((phys_offset + table_phys) as *mut PageTable);
+    let e2 = &mut pd[i2];
+    if e2.is_unused() {
+        log::error!("force_user_access: PD empty");
+        return;
+    }
+    if e2.flags().contains(Ptf::HUGE_PAGE) {
+        let mut f = e2.flags() | userish;
+        f.remove(Ptf::NO_EXECUTE);
+        e2.set_flags(f);
+        log::info!("force_user_access: USER on PML4+PDPT+2MiB");
+        core::arch::asm!("invlpg [{}]", in(reg) va, options(nostack, preserves_flags));
+        return;
+    }
+    {
+        let mut f = e2.flags() | userish;
+        f.remove(Ptf::NO_EXECUTE);
+        e2.set_flags(f);
+    }
+    table_phys = e2.addr().as_u64();
+
+    // PT (4KiB)
+    let pt = &mut *((phys_offset + table_phys) as *mut PageTable);
+    let e1 = &mut pt[i1];
+    if e1.is_unused() {
+        log::error!("force_user_access: PT empty");
+        return;
+    }
+    {
+        let mut f = e1.flags() | userish;
+        f.remove(Ptf::NO_EXECUTE);
+        e1.set_flags(f);
+    }
+    log::info!("force_user_access: USER on full 4KiB chain");
+    core::arch::asm!("invlpg [{}]", in(reg) va, options(nostack, preserves_flags));
 }

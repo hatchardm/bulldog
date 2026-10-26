@@ -1,8 +1,6 @@
 use crate::framebuffer::Framebuffer;
 use crate::color::Color;
 
-// Embed the font directly into the binary
-// Adjust the path if font8x16.bin lives elsewhere
 static FONT8X16: &[u8] = include_bytes!("font8x16.bin");
 
 pub fn load_font() -> &'static [u8] {
@@ -23,6 +21,7 @@ pub fn put_char(
         let row_bits = font[glyph_offset + row];
 
         for col in 0..8 {
+            // Test the high bit first, then shift left each time
             if (row_bits << col) & 0x80 != 0 {
                 fb.put_pixel(x + col, y + row, color);
             }
@@ -30,6 +29,7 @@ pub fn put_char(
     }
 }
 
+// Optional free-function version (you already have the Console wrapper)
 pub fn write_str(
     fb: &mut Framebuffer,
     font: &[u8],
