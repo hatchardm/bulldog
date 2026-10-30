@@ -32,12 +32,14 @@ pub fn sys_exit(code: u64) -> u64 {
         AFTER_EXIT_IDLE => {
             crate::syscall::fd::fd_clear_all();
             info!("[EXIT] FD table cleared");
+            crate::memory::unmap_current_user();
             crate::kernel_idle_after_exit();
         }
         #[cfg(feature = "usermode_chain")]
         AFTER_EXIT_CHAIN_GOODBYE => {
             crate::syscall::fd::fd_clear_all();
             info!("[EXIT] FD table cleared");
+            crate::memory::unmap_current_user();
             info!("[EXIT] chaining to /bin/goodbye");
             crate::run_usermode_elf("/bin/goodbye", true);
         }

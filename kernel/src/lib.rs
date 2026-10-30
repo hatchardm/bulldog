@@ -72,7 +72,7 @@ mod tests;
 use crate::allocator::ALLOCATOR;
 use crate::apic::{lapic_read, LapicRegister, setup_apic};
 use crate::memory::{
-    BootInfoFrameAllocator, PreHeapAllocator,
+    PreHeapAllocator,
     init_offset_page_table, map_lapic_mmio
 };
 use crate::syscall::fd::init_fd_table_with_std;

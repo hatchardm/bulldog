@@ -4,25 +4,74 @@ use x86_64::{
     PhysAddr, VirtAddr,
     structures::paging::{
         FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags,
-        PhysFrame, Size4KiB, Size1GiB, Translate,
+        PhysFrame, Size4KiB, Translate,
     },
     registers::control::Cr3,
 };
 
-use log::{info, debug, warn, error, trace};
+use log::{info, debug, warn, error};
+use spin::Mutex;
 
 extern crate alloc;
 use alloc::vec::Vec;
 use alloc::collections::BTreeSet;
 
-use crate::apic::LAPIC_VIRT_BASE;
 use crate::elf::loader::{SegmentFlags, ElfError};
 use crate::elf::types::Elf64_Ehdr;
 use crate::elf::loader::{validate_elf_header, get_program_headers, load_segments};
 use crate::MAPPER;
 use crate::FRAME_ALLOCATOR;
 
+// ---------------------------------------------------------------------------
+// Track pages mapped for the current user program
+// ---------------------------------------------------------------------------
 
+/// Virtual page starts (4KiB) belonging to the current user process.
+static USER_PAGES: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
+
+fn track_user_page(page: Page<Size4KiB>) {
+    USER_PAGES.lock().insert(page.start_address().as_u64());
+}
+
+/// Unmap every page recorded for the current user program and free frames.
+/// Call from sys_exit before chaining or going idle.
+pub fn unmap_current_user() {
+    let pages: Vec<u64> = {
+        let mut g = USER_PAGES.lock();
+        let v: Vec<u64> = g.iter().copied().collect();
+        g.clear();
+        v
+    };
+
+    if pages.is_empty() {
+        info!("unmap_current_user: nothing to unmap");
+        return;
+    }
+
+    info!("unmap_current_user: {} pages", pages.len());
+
+    let mut mapper_guard = MAPPER.lock();
+    let mapper = mapper_guard.as_mut().unwrap();
+
+    for va in pages {
+        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(va));
+        match mapper.unmap(page) {
+            Ok((_frame, flush)) => {
+                flush.flush();
+                // Frame recycle later when BulldogFrameAllocator::free_frame exists
+            }
+            Err(e) => {
+                warn!("unmap_current_user: page {:#x} failed: {:?}", va, e);
+            }
+        }
+    }
+
+    info!("unmap_current_user: done");
+}
+
+// ---------------------------------------------------------------------------
+// Page table helpers
+// ---------------------------------------------------------------------------
 
 /// Same safety requirements as `init`.
 unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut PageTable {
@@ -37,6 +86,10 @@ unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut
 pub unsafe fn init_offset_page_table(physical_memory_offset: VirtAddr) -> OffsetPageTable<'static> {
     OffsetPageTable::new(active_level_4_table(physical_memory_offset), physical_memory_offset)
 }
+
+// ---------------------------------------------------------------------------
+// Frame allocators
+// ---------------------------------------------------------------------------
 
 /// A FrameAllocator that always returns `None`.
 pub struct EmptyFrameAllocator;
@@ -53,12 +106,6 @@ pub struct PreHeapAllocator {
     pub next: usize,
 }
 
-pub struct BootInfoFrameAllocator {
-    pub memory_map: &'static [MemoryRegion],
-    pub frames: Vec<PhysFrame>,
-    pub next: usize,
-    pub allocated: FrameBitmap,
-}
 
 pub struct FrameBitmap {
     bits: *mut [u8; 32768],
@@ -78,11 +125,13 @@ impl FrameBitmap {
             }
         }
     }
-}
 
-impl FrameBitmap {
     fn as_slice(&self) -> &[u8; 32768] {
         unsafe { &*self.bits }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8; 32768] {
+        unsafe { &mut *self.bits }
     }
 
     pub fn contains(&self, frame: PhysFrame) -> bool {
@@ -97,44 +146,34 @@ impl FrameBitmap {
 
         self.as_slice()[byte] & (1 << bit) != 0
     }
-}
 
-impl FrameBitmap {
     pub fn all_frames(&self) -> impl Iterator<Item = PhysFrame> {
         (0..self.frame_count).map(move |i| {
             let addr = self.base_address + (i as u64) * 4096;
             PhysFrame::containing_address(PhysAddr::new(addr))
         })
     }
-}
 
-impl FrameBitmap {
     pub fn is_used(&self, frame: PhysFrame) -> bool {
         let index = frame.start_address().as_u64() / 4096;
         let byte = (index / 8) as usize;
         let bit = (index % 8) as u8;
         self.as_slice()[byte] & (1 << bit) != 0
     }
-}
 
-impl FrameBitmap {
     pub fn iter_used_frames(&self) -> impl Iterator<Item = PhysFrame> + '_ {
         self.as_slice().iter().enumerate().flat_map(|(byte_index, byte)| {
             (0..8).filter_map(move |bit| {
                 if byte & (1 << bit) != 0 {
                     let frame_number = byte_index * 8 + bit as usize;
-                    Some(PhysFrame::containing_address(PhysAddr::new((frame_number * 4096) as u64)))
+                    Some(PhysFrame::containing_address(PhysAddr::new(
+                        (frame_number * 4096) as u64,
+                    )))
                 } else {
                     None
                 }
             })
         })
-    }
-}
-
-impl FrameBitmap {
-    fn as_mut_slice(&mut self) -> &mut [u8; 32768] {
-        unsafe { &mut *self.bits }
     }
 
     pub fn mark_used(&mut self, frame: PhysFrame) -> bool {
@@ -149,6 +188,18 @@ impl FrameBitmap {
 
         self.as_mut_slice()[byte] |= 1 << bit;
         true
+    }
+
+    pub fn mark_free(&mut self, frame: PhysFrame) {
+        let index = frame.start_address().as_u64() / 4096;
+        let byte = (index / 8) as usize;
+        let bit = (index % 8) as u8;
+
+        if byte >= self.as_mut_slice().len() {
+            return;
+        }
+
+        self.as_mut_slice()[byte] &= !(1 << bit);
     }
 }
 
@@ -171,147 +222,9 @@ unsafe impl FrameAllocator<Size4KiB> for PreHeapAllocator {
     }
 }
 
-impl BootInfoFrameAllocator {
-    pub fn new(memory_map: &'static [MemoryRegion], frames: Vec<PhysFrame>) -> Self {
-        info!("Entered BootInfoFrameAllocator::new");
-
-        BootInfoFrameAllocator {
-            memory_map,
-            frames,
-            next: 0,
-            allocated: FrameBitmap::new(),
-        }
-    }
-}
-
-impl BootInfoFrameAllocator {
-    pub fn allocated_frames(&self) -> impl Iterator<Item = PhysFrame> {
-        self.allocated.iter_used_frames()
-    }
-}
-
-impl BootInfoFrameAllocator {
-    pub fn into_vec(self) -> Vec<PhysFrame> {
-        self.frames
-    }
-}
-
-impl BootInfoFrameAllocator {
-    pub fn is_allocated(&self, frame: PhysFrame) -> bool {
-        self.allocated.contains(frame)
-    }
-}
-
-impl BootInfoFrameAllocator {
-    pub unsafe fn init_temp(
-        memory_map: &'static [MemoryRegion],
-    ) -> ([Option<PhysFrame>; 512], &'static [MemoryRegion]) {
-        info!("Entered BootInfoFrameAllocator::init_temp");
-        debug!("memory_map.len = {}", memory_map.len());
-
-        for (i, region) in memory_map.iter().enumerate() {
-            debug!(
-                "Region {}: start={:#x}, end={:#x}, kind={:?}",
-                i, region.start, region.end, region.kind
-            );
-        }
-
-        let mut temp_frames: [Option<PhysFrame>; 512] = [None; 512];
-        let mut count = 0;
-
-        for region in memory_map.iter() {
-            for addr in (region.start..region.end).step_by(4096) {
-                if count >= temp_frames.len() {
-                    break;
-                }
-
-                let frame = PhysFrame::containing_address(PhysAddr::new(addr));
-                if frame.start_address().as_u64() < 0x10000 {
-                    continue;
-                }
-
-                debug!("Adding frame: {:#x}", addr);
-                temp_frames[count] = Some(frame);
-                count += 1;
-            }
-
-            if count >= temp_frames.len() {
-                break;
-            }
-        }
-
-        (temp_frames, memory_map)
-    }
-}
-
-impl BootInfoFrameAllocator {
-    pub fn mark_used_frames(&mut self) {
-        info!("Starting mark_used_frames()");
-
-        for region in self.memory_map.iter() {
-            if region.start >= region.end {
-                info!("Skipping invalid region: start={:#x}, end={:#x}", region.start, region.end);
-                continue;
-            }
-
-            match region.kind {
-                MemoryRegionKind::Usable => {
-                    debug!("Skipping usable region: {:#x} - {:#x}", region.start, region.end);
-                    continue;
-                }
-                _ => {
-                    debug!(
-                        "Marking used region: start={:#x}, end={:#x}, kind={:?}",
-                        region.start, region.end, region.kind
-                    );
-
-                    for addr in (region.start..region.end).step_by(4096) {
-                        let frame = PhysFrame::containing_address(PhysAddr::new(addr));
-                        self.allocated.mark_used(frame);
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl BootInfoFrameAllocator {
-    pub unsafe fn init(memory_map: &'static [MemoryRegion]) -> Self {
-        info!("Entered BootInfoFrameAllocator::init");
-        debug!("memory_map.len = {}", memory_map.len());
-
-        let mut frames = Vec::new();
-
-        for region in memory_map.iter() {
-            for addr in (region.start..region.end).step_by(4096) {
-                let frame = PhysFrame::containing_address(PhysAddr::new(addr));
-                if frame.start_address().as_u64() < 0x10000 {
-                    continue;
-                }
-                frames.push(frame);
-            }
-        }
-
-        BootInfoFrameAllocator {
-            memory_map,
-            frames,
-            next: 0,
-            allocated: FrameBitmap::new(),
-        }
-    }
-}
-
-unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
-    fn allocate_frame(&mut self) -> Option<PhysFrame> {
-        if self.next >= self.frames.len() {
-            return None;
-        }
-        let frame = self.frames[self.next];
-        self.next += 1;
-        self.allocated.mark_used(frame);
-        Some(frame)
-    }
-}
+// ---------------------------------------------------------------------------
+// Mapping helpers
+// ---------------------------------------------------------------------------
 
 pub fn map_lapic_mmio(
     mapper: &mut impl Mapper<Size4KiB>,
@@ -326,7 +239,8 @@ pub fn map_lapic_mmio(
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
 
     unsafe {
-        mapper.map_to(page, frame, flags, frame_allocator)
+        mapper
+            .map_to(page, frame, flags, frame_allocator)
             .expect("LAPIC map failed")
             .flush();
     }
@@ -344,7 +258,6 @@ pub fn map_page(
     let page = Page::containing_address(virt);
     let frame = PhysFrame::containing_address(phys);
 
-    // Already mapped (e.g. identity / huge page)?
     if mapper.translate_addr(virt).is_some() {
         let _ = unsafe { mapper.update_flags(page, flags) };
         return;
@@ -382,41 +295,35 @@ pub fn map_elf_segment(
     let start_page = Page::containing_address(start);
     let end_page = Page::containing_address(end);
 
-    // Always WRITABLE while loading so PTEs accept data; USER for ring 3 later.
-    // SMAP-safe path: we still copy via HHDM, not through the user VA.
-let mut page_flags = PageTableFlags::PRESENT
-    | PageTableFlags::USER_ACCESSIBLE
-    | PageTableFlags::WRITABLE;
-if !flags.executable {
-    page_flags |= PageTableFlags::NO_EXECUTE;
-}
-
-let parent_flags = PageTableFlags::PRESENT
-    | PageTableFlags::WRITABLE
-    | PageTableFlags::USER_ACCESSIBLE;
-
-for page in Page::range_inclusive(start_page, end_page) {
-    if mapper.translate_addr(page.start_address()).is_some() {
-        continue;
+    let mut page_flags =
+        PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE | PageTableFlags::WRITABLE;
+    if !flags.executable {
+        page_flags |= PageTableFlags::NO_EXECUTE;
     }
 
-    let frame = frame_allocator
-        .allocate_frame()
-        .ok_or(ElfError::BadPhSize)?;
+    let parent_flags =
+        PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;
 
-    unsafe {
-        mapper
-            .map_to_with_table_flags(
-                page,
-                frame,
-                page_flags,
-                parent_flags,
-                frame_allocator,
-            )
-            .map_err(|_| ElfError::BadPhSize)?
-            .flush();
+    for page in Page::range_inclusive(start_page, end_page) {
+        if mapper.translate_addr(page.start_address()).is_some() {
+            // Already mapped (e.g. overlapping segment) — still track for unmap
+            track_user_page(page);
+            continue;
+        }
+
+        let frame = frame_allocator
+            .allocate_frame()
+            .ok_or(ElfError::BadPhSize)?;
+
+        unsafe {
+            mapper
+                .map_to_with_table_flags(page, frame, page_flags, parent_flags, frame_allocator)
+                .map_err(|_| ElfError::BadPhSize)?
+                .flush();
+        }
+
+        track_user_page(page);
     }
-}
 
     // Copy file bytes through HHDM (phys), not the user virtual address
     let mut copied = 0usize;
@@ -442,7 +349,7 @@ for page in Page::range_inclusive(start_page, end_page) {
         va += chunk as u64;
     }
 
-    // Zero the BSS tail (mem_size > file_size) via HHDM as well
+    // Zero BSS tail via HHDM
     if mem_size > file_bytes.len() {
         let mut zeroed = 0usize;
         let mut va = vaddr_start + file_bytes.len() as u64;
@@ -466,7 +373,6 @@ for page in Page::range_inclusive(start_page, end_page) {
         }
     }
 
-    // Optional: drop WRITABLE on non-writable segments after load
     if !flags.writable {
         let mut ro_flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
         if !flags.executable {
@@ -485,9 +391,7 @@ pub fn load_elf_into_address_space(
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
     elf_data: &[u8],
 ) -> Result<u64, ElfError> {
-    let hdr = unsafe {
-        &*(elf_data.as_ptr() as *const Elf64_Ehdr)
-    };
+    let hdr = unsafe { &*(elf_data.as_ptr() as *const Elf64_Ehdr) };
 
     validate_elf_header(hdr)?;
     let phdrs = get_program_headers(elf_data, hdr)?;
@@ -513,10 +417,8 @@ pub fn map_user_segment(
     let mut fa_guard = FRAME_ALLOCATOR.lock();
     let fa = fa_guard.as_mut().unwrap();
 
-    map_elf_segment(mapper, fa, vaddr, mem_size, file_bytes, flags)
-        .map_err(|_| ())
+    map_elf_segment(mapper, fa, vaddr, mem_size, file_bytes, flags).map_err(|_| ())
 }
-
 
 pub fn map_user_page(
     mapper: &mut (impl Mapper<Size4KiB> + Translate),
@@ -524,16 +426,15 @@ pub fn map_user_page(
     vaddr: u64,
 ) -> Result<(), ()> {
     let virt = VirtAddr::new(vaddr);
+    let page = Page::<Size4KiB>::containing_address(virt);
 
-    // Allocate a physical frame
     let frame = fa.allocate_frame().ok_or(())?;
 
-    // Usermode page flags
-    let flags = PageTableFlags::PRESENT
-        | PageTableFlags::WRITABLE
-        | PageTableFlags::USER_ACCESSIBLE;
+    let flags =
+        PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;
 
     map_page(mapper, virt, frame.start_address(), flags, fa);
+    track_user_page(page);
     Ok(())
 }
 
@@ -551,17 +452,11 @@ pub fn alloc_user_stack() -> Result<u64, ()> {
         map_user_page(mapper, fa, base + offset as u64)?;
     }
 
-    Ok(top) // no force_user_access
+    Ok(top)
 }
 
-
-    
 /// Set USER_ACCESSIBLE (and clear NX) on every level of the page walk for `vaddr`.
-/// Used so ring 3 can execute/read mappings whose parent tables were created
-/// without the U/S bit.
 pub unsafe fn force_user_access(vaddr: VirtAddr, phys_offset: u64) {
-    use x86_64::registers::control::Cr3;
-    use x86_64::structures::paging::PageTable;
     use x86_64::structures::paging::page_table::PageTableFlags as Ptf;
 
     let (cr3_frame, _) = Cr3::read();
@@ -575,7 +470,6 @@ pub unsafe fn force_user_access(vaddr: VirtAddr, phys_offset: u64) {
 
     let userish = Ptf::PRESENT | Ptf::WRITABLE | Ptf::USER_ACCESSIBLE;
 
-    // PML4
     let pml4 = &mut *((phys_offset + table_phys) as *mut PageTable);
     let e4 = &mut pml4[i4];
     if e4.is_unused() {
@@ -589,7 +483,6 @@ pub unsafe fn force_user_access(vaddr: VirtAddr, phys_offset: u64) {
     }
     table_phys = e4.addr().as_u64();
 
-    // PDPT
     let pdpt = &mut *((phys_offset + table_phys) as *mut PageTable);
     let e3 = &mut pdpt[i3];
     if e3.is_unused() {
@@ -611,7 +504,6 @@ pub unsafe fn force_user_access(vaddr: VirtAddr, phys_offset: u64) {
     }
     table_phys = e3.addr().as_u64();
 
-    // PD
     let pd = &mut *((phys_offset + table_phys) as *mut PageTable);
     let e2 = &mut pd[i2];
     if e2.is_unused() {
@@ -633,7 +525,6 @@ pub unsafe fn force_user_access(vaddr: VirtAddr, phys_offset: u64) {
     }
     table_phys = e2.addr().as_u64();
 
-    // PT (4KiB)
     let pt = &mut *((phys_offset + table_phys) as *mut PageTable);
     let e1 = &mut pt[i1];
     if e1.is_unused() {
