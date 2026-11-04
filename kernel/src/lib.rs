@@ -65,6 +65,7 @@ pub mod text;
 pub mod font8x16;
 pub mod paging;
 pub mod fs;
+pub mod process;
 
 #[cfg(feature = "syscall_tests")]
 mod tests;
@@ -338,6 +339,10 @@ pub fn kernel_init(
     feature = "usermode_chain"
 ))]
 pub fn run_usermode_elf(path: &str, idle_after_exit: bool) -> ! {
+
+    let pid = crate::process::create_process(path);
+
+
     info!("Loading {} ELF", path);
 
     // Re-init FDs for this process (needed on chain after sys_exit cleared them)
@@ -399,6 +404,13 @@ pub fn run_usermode_elf(path: &str, idle_after_exit: bool) -> ! {
     };
 
     let entry = hdr.e_entry;
+
+    crate::process::update_process_execution(
+        pid,
+        entry,
+        user_stack_top,
+    );
+
     info!("Entering user mode at entry={:#x}", entry);
 
     if idle_after_exit {
@@ -412,12 +424,18 @@ pub fn run_usermode_elf(path: &str, idle_after_exit: bool) -> ! {
             VirtAddr::new(entry),
             0xffff_8000_0000_0000,
         );
-        enter_user_mode(entry, user_stack_top);
+
+      crate::process::set_current_pid(pid);
+      crate::process::mark_running(pid);
+      enter_user_mode(entry, user_stack_top);
     }
 }
 
 pub fn kernel_idle_after_exit() -> ! {
+    crate::process::dump_process_table();
+
     info!("back in kernel idle after process exit");
+
     loop {
         unsafe {
             core::arch::asm!("sti; hlt", options(nomem, nostack));

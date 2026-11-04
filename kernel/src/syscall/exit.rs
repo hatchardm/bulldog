@@ -26,6 +26,18 @@ pub fn arm_exit_chain_goodbye() {
 pub fn sys_exit(code: u64) -> u64 {
     info!("[EXIT] process exiting with code={}", code);
 
+    let pid = crate::process::current_pid();
+
+    crate::process::mark_exited( 
+        pid,
+        code,
+    );
+
+    info!(
+        "[EXIT] pid={} marked exited",
+        pid
+    );
+
     let after = AFTER_EXIT.swap(AFTER_EXIT_NONE, Ordering::SeqCst);
 
     match after {

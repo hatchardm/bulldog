@@ -52,13 +52,17 @@ pub fn unmap_current_user() {
 
     let mut mapper_guard = MAPPER.lock();
     let mapper = mapper_guard.as_mut().unwrap();
+    let mut fa_guard = FRAME_ALLOCATOR.lock();
+    let fa = fa_guard.as_mut().unwrap();
 
+    let mut freed = 0usize;
     for va in pages {
         let page = Page::<Size4KiB>::containing_address(VirtAddr::new(va));
         match mapper.unmap(page) {
-            Ok((_frame, flush)) => {
+            Ok((frame, flush)) => {
                 flush.flush();
-                // Frame recycle later when BulldogFrameAllocator::free_frame exists
+                fa.free_frame(frame);
+                freed += 1;
             }
             Err(e) => {
                 warn!("unmap_current_user: page {:#x} failed: {:?}", va, e);
@@ -66,7 +70,11 @@ pub fn unmap_current_user() {
         }
     }
 
-    info!("unmap_current_user: done");
+    info!(
+        "unmap_current_user: done (freed {}, free_list={})",
+        freed,
+        fa.free_list_len()
+    );
 }
 
 // ---------------------------------------------------------------------------
