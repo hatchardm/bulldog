@@ -1,72 +1,202 @@
-# Bulldog Kernel – Boot & Initialization Subsystem
+## Bulldog Kernel – Boot & Initialization Subsystem
 
-This directory contains documentation for Bulldog’s **boot and early initialization**
-subsystem. It covers everything that happens before the kernel enters its main architecture
-and interface layers.
+Reviewed: November 2026
 
-Boot is a standalone subsystem because it spans:
+This directory contains documentation for Bulldog's bootloader and early kernel initialization subsystems.
 
-- Firmware / bootloader interaction  
-- Early memory map setup  
-- Higher‑half kernel relocation  
-- Early logging  
-- APIC initialization  
-- Transition into full kernel initialization  
+These documents describe the current UEFI 0.41 boot architecture and the initialization path used by the Bulldog kernel before normal execution begins.
+
+The boot subsystem forms the foundation of the operating system and is responsible for establishing the execution environment required by all higher-level components.
+
+Current documented areas include:
+
+- UEFI boot services
+- Graphics Output Protocol (GOP)
+- BootInfo construction
+- Memory map handoff
+- Higher-Half Direct Mapping (HHDM)
+- Paging bootstrap
+- Kernel handoff
+- Early memory initialization
+- FAT32 initialization
+- VFS initialization
+- Syscall initialization
+- User-mode activation
+- Process management integration
 
 ---
 
 ## Documents
 
-### Boot Process
-- `boot.md`  
-Describes the early boot sequence, memory map, stack setup, HHDM mapping, and transition to
-kernel initialization.
+### Bootloader Architecture
 
-More documents will be added as the boot subsystem expands.
+    bootloader.md
+
+Describes the current UEFI 0.41 bootloader implementation.
+
+Topics include:
+
+    GOP initialization
+    Framebuffer handoff
+    FAT image loading
+    BootInfo construction
+    Memory-map processing
+    HHDM creation
+    Paging activation
+    Kernel transfer
+
+---
+
+### Kernel Boot Process
+
+    boot.md
+
+Describes the kernel-side initialization sequence after bootloader handoff.
+
+Topics include:
+
+    kernel_main()
+    kernel_init()
+    Heap initialization
+    Frame allocator construction
+    FAT32 initialization
+    VFS initialization
+    GDT/TSS setup
+    IDT setup
+    Syscall setup
+    LAPIC initialization
+    User-mode startup
+    Process management integration
 
 ---
 
 ## Purpose of This Layer
 
-The boot layer:
+The boot layer defines the earliest execution environment used by Bulldog.
 
-- Defines the earliest kernel invariants  
-- Documents memory map and relocation  
-- Establishes initial CPU state  
-- Prepares architecture subsystems  
-- Bridges firmware → kernel execution  
+Responsibilities include:
 
-Boot is intentionally isolated from the architecture layer to keep subsystem boundaries
-clean and contributor‑friendly.
+    Firmware interaction
+    Memory discovery
+    Framebuffer initialization
+    Paging setup
+    BootInfo handoff
+    Kernel startup
+    Early subsystem initialization
+
+This layer exists to provide a stable foundation for:
+
+    Architecture layer
+    Interface layer
+    Filesystem layer
+    User-mode execution
+    Process management
+    Future scheduler development
+
+---
+
+## Current Architecture
+
+The current startup sequence is:
+
+    UEFI Firmware
+            ↓
+    Bootloader
+            ↓
+    BootInfo Handoff
+            ↓
+    kernel_main()
+            ↓
+    kernel_init()
+            ↓
+    Memory Initialization
+            ↓
+    FAT32 Initialization
+            ↓
+    VFS Initialization
+            ↓
+    Syscall Initialization
+            ↓
+    User Mode
+            ↓
+    Process Management
+            ↓
+    Kernel Idle
 
 ---
 
 ## Related Layers
 
 ### Architecture Layer
-Hardware‑facing subsystems:
 
-```
-../architecture/index.md
-```
+Hardware-facing subsystems:
+
+    ../architecture/index.md
+
+Includes:
+
+    Interrupts
+    APIC
+    Memory Management
+    GDT
+    TSS
+    CPU Initialization
+
+---
 
 ### Interface Layer
-User‑mode boundary and syscalls:
 
-```
-../interface/index.md
-```
+User-mode and syscall interfaces:
+
+    ../interface/index.md
+
+Includes:
+
+    Syscalls
+    Process Interfaces
+    ELF Loading
+    Scheduler Planning
+    VFS Interfaces
 
 ---
 
 ## Contributor Notes
 
-- Keep boot documentation precise and minimal  
-- Avoid mixing boot logic with architecture or interface layers  
-- Document all early‑boot assumptions and invariants  
-- Update this index when adding new boot documents
+- Keep boot documentation synchronized with bootloader and kernel code.
+- Treat BootInfo as the authoritative bootloader-to-kernel contract.
+- Document all changes to memory layout and paging assumptions.
+- Update these documents whenever bootloader responsibilities change.
+- Keep implementation details accurate following UEFI version migrations.
+
+---
+
+## Current Status
+
+Implemented:
+
+    UEFI 0.41 bootloader
+    GOP framebuffer support
+    BootInfo handoff
+    FAT image handoff
+    HHDM creation
+    Heap initialization
+    FAT32 support
+    VFS support
+    ELF loading
+    User-mode execution
+    Process management
+
+Planned:
+
+    ACPI integration
+    IOAPIC support
+    SMP startup
+    Scheduler implementation
+    Context switching
+    KASLR
 
 ---
 
 ## License
-MIT or Apache 2.0 — to be determined.
+
+MIT or Apache 2.0 — TBD.

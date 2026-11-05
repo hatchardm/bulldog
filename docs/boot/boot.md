@@ -1,338 +1,427 @@
-# Bulldog Kernel – Boot and Higher‑Half Initialization (Updated 2026)
+## Bulldog Kernel – Boot and Higher-Half Initialization
 
-This document describes Bulldog’s **current, real** boot process as implemented in the new Bulldog bootloader and kernel. It replaces older Linux‑dev era notes and reflects the actual behavior of:
+Reviewed: November 2026
 
-- `bootloader/src/main.rs`
-- `kernel/src/lib.rs` (`kernel_main` + `kernel_init`)
-- `memory.rs` (paging + direct map + LAPIC MMIO)
-- `gdt.rs` + `stack.rs` (GDT, TSS, IST stacks)
-- `interrupts.rs` (IDT + LAPIC timer vector)
-- `apic.rs` (LAPIC bring‑up)
+This document describes Bulldog's current boot process as implemented by the UEFI 0.41 bootloader and current kernel architecture.
 
-This is a description of the **current implementation**, not future SMP or user‑mode plans.
+It reflects the behavior of:
+
+    bootloader/src/main.rs
+    bootloader/src/boot_mod.rs
+    bootloader/src/paging.rs
+    boot-proto/src/lib.rs
+
+    kernel/src/lib.rs
+    kernel/src/memory.rs
+    kernel/src/gdt.rs
+    kernel/src/interrupts.rs
+    kernel/src/apic.rs
+    kernel/src/process.rs
+
+This document reflects the current implementation rather than future design goals.
 
 ---
 
 ## 1. Boot Overview
 
-Bulldog’s boot sequence consists of:
+Bulldog's current boot sequence is:
 
-1. Bootloader loads kernel ELF into physical memory  
-2. Bootloader initializes GOP framebuffer  
-3. Bootloader constructs BootInfo (framebuffer, memory map, physical offset)  
-4. Bootloader installs identity paging  
-5. Bootloader jumps to kernel entry  
-6. Kernel switches to higher‑half mapping  
-7. Kernel initializes memory + heap + frame allocator  
-8. Kernel initializes GDT/TSS + IDT  
-9. Kernel maps LAPIC MMIO + configures APIC  
-10. Kernel enables interrupts + LAPIC timer  
-11. Kernel enters `hlt_loop()`
+    UEFI Firmware
+            ↓
+    Bootloader startup
+            ↓
+    GOP initialization
+            ↓
+    Framebuffer console creation
+            ↓
+    kernel.elf loaded
+            ↓
+    fat.img loaded
+            ↓
+    BootInfo populated
+            ↓
+    ExitBootServices()
+            ↓
+    Identity map + HHDM created
+            ↓
+    CR3 loaded
+            ↓
+    kernel_main()
+            ↓
+    kernel_init()
+            ↓
+    Heap initialization
+            ↓
+    FAT32 initialization
+            ↓
+    VFS initialization
+            ↓
+    Syscall initialization
+            ↓
+    User program loading
+            ↓
+    User-mode execution
+            ↓
+    Process management
+            ↓
+    Kernel idle loop
 
-This sequence is deterministic and fully logged.
+This sequence is deterministic and extensively logged through the serial logging subsystem.
 
 ---
 
-## 2. Bootloader Responsibilities (Current Implementation)
+## 2. Bootloader Responsibilities
 
-### 2.1 Kernel ELF loading
-- Loads the kernel ELF64 image into physical memory  
-- Ensures `.text`, `.rodata`, `.data`, `.bss` are placed correctly  
-- Logs ELF load address and section boundaries
+The bootloader is responsible for:
 
-### 2.2 Framebuffer initialization
-Bootloader initializes GOP and provides:
+    Loading kernel.elf
+    Loading fat.img
+    Initializing GOP
+    Constructing BootInfo
+    Gathering the memory map
+    Building identity mappings
+    Building the Higher-Half Direct Map (HHDM)
+    Installing CR3
+    Providing a kernel stack
+    Jumping to the kernel
 
-- physical framebuffer address  
-- virtual framebuffer address  
-- width, height, stride  
-- pixel format  
+The kernel assumes these responsibilities have already been completed when execution begins.
 
-Kernel uses this for early framebuffer console.
+---
 
-### 2.3 Memory map handoff
-Bootloader passes a complete memory map:
+## 3. BootInfo Handoff
 
-- Usable RAM  
-- Reserved regions  
-- ACPI tables  
-- MMIO regions  
-- Bootloader structures  
+The kernel receives a BootInfo structure containing:
 
-Kernel consumes this to build the frame allocator.
+### Framebuffer Information
 
-### 2.4 Physical memory offset (HHDM)
-Bootloader provides:
+    Physical framebuffer address
+    Virtual framebuffer address
+    Width
+    Height
+    Stride
+    Pixel format
 
-```
-boot_info.physical_memory_offset = 0xFFFF_8000_0000_0000
-```
+### Memory Information
 
-This creates the **direct physical map**:
+    Physical memory offset (HHDM)
+    Memory region table
+    Memory region count
 
-```
-virt = phys + phys_mem_offset
-```
+### Kernel Information
+
+    Kernel physical start address
+    Kernel physical end address
+    Kernel entry address
+
+### Filesystem Information
+
+    FAT image physical address
+    FAT image size
+
+BootInfo is the primary contract between bootloader and kernel.
+
+---
+
+## 4. Entering kernel_main()
+
+Execution enters:
+
+    kernel_main(&mut BootInfo)
+
+The kernel performs:
+
+    Framebuffer initialization
+    Writer initialization
+    Logger initialization
+    Memory map extraction
+    FAT image registration
+
+Control is then transferred to:
+
+    kernel_init()
+
+where the majority of subsystem initialization occurs.
+
+---
+
+## 5. Higher-Half Addressing
+
+Bulldog operates using a Higher-Half Direct Map.
+
+Current base:
+
+    0xFFFF800000000000
+
+Address conversion:
+
+    virtual = physical + HHDM_BASE
+
+This allows direct access to physical memory through higher-half virtual addresses.
 
 Used for:
 
-- page‑table access  
-- frame allocator  
-- LAPIC stack mapping  
-- memory map logging
-
-### 2.5 Identity paging
-Bootloader installs:
-
-- identity map for low memory  
-- temporary mapping for kernel load region  
-- mapping for framebuffer  
-- mapping for BootInfo  
-
-This allows the kernel to run before switching to higher‑half.
-
-### 2.6 Jump to kernel
-Bootloader jumps to:
-
-```
-kernel_entry(boot_info_ptr)
-```
-
-with:
-
-- long mode active  
-- paging active  
-- stack valid  
-- interrupts disabled
+    Page-table management
+    Frame allocator access
+    Framebuffer access
+    Hardware mappings
+    Memory management
 
 ---
 
-## 3. Kernel Entry (`kernel_main`)
+## 6. Memory Initialization
 
-The kernel entry point performs:
+Using the BootInfo memory map, the kernel constructs:
 
-1. Framebuffer setup  
-2. Writer initialization  
-3. Logger initialization  
-4. Memory map extraction  
-5. Call into `kernel_init()`  
-6. Enter `hlt_loop()`
+    Pre-heap allocator
+    Heap allocator
+    Frame allocator
 
-All heavy lifting happens inside `kernel_init`.
+These allocators become the foundation for:
 
----
+    Dynamic allocation
+    VFS structures
+    File descriptor tables
+    User-mode memory mappings
 
-## 4. Higher‑Half Paging
-
-Bulldog is linked to run at:
-
-```
-0xFFFF_8000_0000_0000
-```
-
-Kernel constructs an `OffsetPageTable`:
-
-```rust
-let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-let mut mapper = unsafe { init_offset_page_table(phys_mem_offset) };
-```
-
-This enables:
-
-- direct physical memory access  
-- page‑table manipulation  
-- higher‑half virtual addressing  
-
-No CR3 switch is needed — bootloader paging already supports higher‑half execution.
+The allocator subsystem must be operational before higher-level services can be initialized.
 
 ---
 
-## 5. Memory Map Processing
+## 7. Heap Initialization
 
-Kernel logs each memory region:
+The kernel initializes the heap using:
 
-```
-kind=Usable, start=0x..., end=0x...
-kind=Reserved, start=0x..., end=0x...
-kind=Acpi, ...
-kind=Mmio, ...
-```
+    allocator::init_heap()
 
-Then constructs:
+After heap initialization:
 
-- temporary pre‑heap allocator  
-- full bitmap frame allocator  
+    Vec becomes usable
+    Box becomes usable
+    FAT structures become usable
+    VFS becomes usable
+    Process tables become usable
 
-Allocator is used for:
-
-- heap initialization  
-- LAPIC stack mapping  
-- future page allocations
+Heap initialization is one of the earliest kernel responsibilities.
 
 ---
 
-## 6. Kernel Heap Initialization
+## 8. FAT32 Initialization
 
-Heap is initialized via:
+The bootloader loads fat.img into memory before kernel startup.
 
-```rust
-allocator::init_heap(&mut mapper, &mut temp_allocator);
-```
+The kernel:
 
-Once heap is online:
+    Reads the BPB
+    Loads the FAT
+    Registers global FAT structures
+    Reads the root directory
 
-- `Box`, `Vec`, `BTreeMap` become usable  
-- FD table is initialized (`init_fd_table_with_std()`)  
-- VFS becomes usable  
-- Syscalls can allocate memory
+Current user applications are loaded from this FAT32 image.
 
----
+Example:
 
-## 7. GDT, TSS, and IST Stacks
-
-Kernel initializes:
-
-- kernel code segment  
-- kernel data segment  
-- TSS with two IST stacks:
-  - IST0 → double fault  
-  - IST1 → LAPIC timer + page fault  
-
-Stacks are:
-
-- 128 KiB  
-- statically allocated  
-- 16‑byte aligned  
-- mapped in higher‑half space
-
-Must occur **before enabling interrupts**.
+    /bin/hello
+    /bin/goodbye
 
 ---
 
-## 8. IDT Initialization
+## 9. Virtual File System (VFS)
 
-`interrupts::init_idt()` installs:
+After FAT32 initialization the VFS is initialized.
 
-- all CPU exception handlers  
-- IST‑backed page fault + double fault  
-- LAPIC timer vector  
-- spurious vector  
-- default handlers for unused vectors  
-- skips syscall vector (owned by syscall subsystem)
+Current usage:
 
-IDT is loaded via `lidt`.
+    ELF loading
+    File operations
+    User-mode program access
 
----
-
-## 9. Syscall Vector Initialization
-
-Syscall subsystem installs vector `0x80`:
-
-```rust
-init_syscall();
-```
-
-This sets:
-
-- DPL=3  
-- handler = `syscall_handler`  
-- ABI = `rax, rdi, rsi, rdx`
-
-Syscalls are now ready for usermode (future).
+The VFS provides a filesystem abstraction independent of the underlying storage implementation.
 
 ---
 
-## 10. LAPIC MMIO Mapping
+## 10. GDT, TSS and IST Stacks
 
-Kernel maps LAPIC MMIO:
+The kernel initializes:
 
-```
-virt: 0xFFFF_FF00_0000_0000
-phys: 0xFEE0_0000
-flags: PRESENT | WRITABLE | NO_EXECUTE
-```
+    GDT
+    TSS
+    Interrupt Stack Tables (IST)
 
-Must occur **before** calling `setup_apic()`.
+Current IST usage includes:
 
----
+    Double fault handling
+    Page fault handling
+    LAPIC timer interrupt handling
 
-## 11. LAPIC IST Stack Mapping
+Requirements:
 
-Kernel:
-
-1. Computes LAPIC stack virtual range  
-2. Marks frames as used  
-3. Remaps pages with correct flags  
-4. Flushes TLB entries  
-
-Ensures LAPIC timer + page faults run on a safe stack.
+    Must occur before interrupts are enabled
+    Stacks must remain mapped and aligned
 
 ---
 
-## 12. LAPIC Initialization
+## 11. Interrupt Descriptor Table
 
-`setup_apic()` performs:
+The kernel installs:
 
-- MSR read of LAPIC base  
-- enable bit check  
-- ID + version logging  
-- SVR write (enable + spurious vector)  
-- timer divisor = 16  
-- LVT_TIMER = periodic mode  
-- INITIAL_COUNT = 500,000  
-- CURRENT_COUNT logging  
+    CPU exception handlers
+    Page-fault handler
+    Double-fault handler
+    LAPIC timer handler
+    Spurious interrupt handler
 
-After this, LAPIC timer interrupts begin firing.
+The IDT is loaded before interrupts are enabled.
 
 ---
 
-## 13. Interrupts Enabled
+## 12. Syscall Initialization
 
-Finally:
+The syscall subsystem installs:
 
-```rust
-x86_64::instructions::interrupts::enable();
-```
+    Vector 0x80
+
+Current interface uses:
+
+    rax
+    rdi
+    rsi
+    rdx
+
+User-mode processes already make use of this mechanism.
+
+Current implemented syscall categories include:
+
+    Process exit
+    Memory allocation
+    File operations
+    File descriptor handling
+
+---
+
+## 13. Local APIC Initialization
+
+Bulldog configures the Local APIC during boot.
+
+Initialization includes:
+
+    LAPIC discovery
+    Version reporting
+    ID reporting
+    SVR configuration
+    LAPIC timer setup
+
+Timer configuration:
+
+    Periodic mode
+    Divisor = 16
+    Initial count = 500000
+
+Diagnostic information is logged through the serial logger.
+
+---
+
+## 14. User-Mode Initialization
+
+Bulldog currently supports user-mode execution.
+
+The kernel can:
+
+    Load ELF executables
+    Map user segments
+    Allocate user stacks
+    Enter Ring 3
+    Service syscalls
+    Return to kernel mode
+
+Verified programs:
+
+    /bin/hello
+    /bin/goodbye
+
+---
+
+## 15. Process Management Integration
+
+After ELF loading:
+
+    Process records are created
+    PIDs are assigned
+    Entry addresses are tracked
+    User stack addresses are tracked
+
+Current process states:
+
+    Ready
+    Running
+    Exited
+
+Verified lifecycle:
+
+    Ready
+      ↓
+    Running
+      ↓
+    Exited
+
+Process records persist after exit for diagnostics and future scheduler integration.
+
+---
+
+## 16. Interrupt Enable
+
+Once initialization is complete:
+
+    interrupts::enable()
+
+is executed.
 
 At this point:
 
-- GDT/TSS active  
-- IDT active  
-- LAPIC timer running  
-- heap initialized  
-- frame allocator active  
-- syscalls registered  
-
-Kernel enters:
-
-```rust
-hlt_loop();
-```
+    Heap is active
+    Frame allocator is active
+    FAT32 is active
+    VFS is active
+    APIC is active
+    Syscalls are active
+    User-mode support is available
 
 ---
 
-## 14. Future Boot Enhancements
+## 17. Kernel Idle State
 
-Planned:
+When no further work remains, Bulldog enters:
 
-- SMP bring‑up  
-- IOAPIC initialization  
-- ACPI parsing  
-- guard pages  
-- usermode entry  
-- scheduler  
-- KASLR
+    hlt_loop()
+
+or returns there following completion of user-mode execution.
+
+This state represents the current end of the boot process.
 
 ---
 
-## 15. Contributor Notes
+## 18. Future Enhancements
 
-- Bootloader must provide correct physical offset  
-- LAPIC MMIO must be mapped before APIC setup  
-- GDT/TSS must be initialized before interrupts  
-- IDT must be loaded before enabling interrupts  
-- Syscall vector must be installed before usermode  
-- IST stacks must remain aligned and unmoved
+Planned work includes:
+
+    Scheduler
+    Context switching
+    SMP support
+    IOAPIC initialization
+    ACPI integration
+    KASLR
+
+User-mode execution and process management are already implemented and are no longer future work.
+
+---
+
+## Contributor Notes
+
+- BootInfo is the foundation of kernel initialization.
+- HHDM assumptions must remain synchronized with the bootloader.
+- FAT image handoff is a required part of the current boot process.
+- User-mode support is operational and should be documented as implemented.
+- Process management is operational and forms the basis of future scheduler work.
 
 ---
 
