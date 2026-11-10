@@ -1,13 +1,21 @@
-# Bulldog Kernel – Memory Management (Current Implementation)
+## Bulldog Kernel – Memory Management (Current Implementation)
 
-This document describes Bulldog’s *actual* memory management implementation as of the current kernel state. It reflects the real behavior of:
+Reviewed: November 2026
 
-- `memory.rs` (frame allocators, bitmap, paging helpers)
-- `gdt.rs` (TSS, IST stacks)
-- `apic.rs` (LAPIC MMIO mapping)
-- `kernel_init` (boot‑time initialization sequence)
+This document describes Bulldog's actual memory-management implementation as of the current kernel state.
 
-This is not a future design document — it is a precise description of how Bulldog works today.
+It reflects the behavior of:
+
+- memory.rs
+- gdt.rs
+- apic.rs
+- kernel initialization
+- ELF loading
+- user-mode execution
+
+This is not a future design document.
+
+It describes the memory subsystem as it currently exists.
 
 ---
 
@@ -15,211 +23,450 @@ This is not a future design document — it is a precise description of how Bull
 
 Bulldog currently implements:
 
-- A higher‑half kernel memory layout  
-- A direct physical memory mapping (via bootloader offset)  
-- Early physical frame allocation  
-- A bitmap‑based frame tracking system  
-- LAPIC MMIO mapping into higher‑half space  
-- GDT + TSS with dedicated IST stacks  
-- Basic paging helpers (`map_page`, `map_lapic_mmio`)  
+- Higher-half kernel memory layout
+- Higher-Half Direct Mapping (HHDM)
+- Early physical frame allocation
+- Bitmap-based frame tracking
+- LAPIC MMIO mapping
+- OffsetPageTable paging management
+- ELF segment mapping
+- User-page allocation
+- User-stack allocation
+- User-page tracking
+- User-memory cleanup
+- GDT/TSS with dedicated IST stacks
 
-User‑mode memory, guard pages, and advanced allocators are **not yet implemented**.
-
----
-
-## 2. Virtual Address Layout (Current)
-
-Bulldog uses a higher‑half kernel model. The bootloader provides a physical‑to‑virtual offset that is used to access page tables and physical memory.
-
-```
-+------------------------------+  0xFFFF_FFFF_FFFF_FFFF
-| Higher-Half Kernel Space     |
-| - Kernel text/data           |
-| - Kernel heap                |
-| - Kernel stacks              |
-| - LAPIC MMIO region          |  (0xFFFF_FF00_0000_0000)
-| - Direct physical map        |
-+------------------------------+  0xFFFF_8000_0000_0000
-| Reserved / Guard Regions     |
-+------------------------------+
-| (User space not implemented) |
-+------------------------------+  0x0000_0000_0000_0000
-```
-
-### Key regions implemented today
-
-| Region | Address | Notes |
-|--------|---------|-------|
-| LAPIC MMIO | `0xFFFF_FF00_0000_0000` | Mapped to physical `0xFEE0_0000` |
-| Direct map | bootloader‑provided offset | Used for page‑table access |
-| Kernel stacks | allocated statically | Used by TSS IST entries |
+Advanced virtual-memory features remain future work.
 
 ---
 
-## 3. Paging Infrastructure
+## 2. Virtual Address Layout
 
-Bulldog uses the standard x86_64 4‑level paging model.
+Bulldog operates as a higher-half kernel.
 
-### Active Page Table Access
+The bootloader provides a physical-memory offset allowing physical memory to be accessed through virtual addresses.
 
-`active_level_4_table()` uses the physical memory offset to convert the CR3 physical address into a virtual address inside the direct map.
+Current conceptual layout:
 
-### Offset Page Table
-
-`init_offset_page_table()` constructs an `OffsetPageTable` using the bootloader’s offset.
-
-### Mapping Helpers
-
-- `map_page()` — maps a single 4 KiB page  
-- `map_lapic_mmio()` — maps the LAPIC MMIO region into higher‑half space  
-
-Large pages are **not** used yet.
-
----
-
-## 4. LAPIC MMIO Mapping
-
-The Local APIC is mapped into higher‑half kernel space at:
-
-```
-LAPIC_VIRT_BASE = 0xFFFF_FF00_0000_0000
-```
-
-`map_lapic_mmio()` maps:
-
-- Virtual: `LAPIC_VIRT_BASE`
-- Physical: `0xFEE0_0000`
-- Flags: `PRESENT | WRITABLE | NO_EXECUTE`
-
-`apic.rs` then uses this mapping for:
-
-- LAPIC ID
-- LAPIC version
-- Timer configuration
-- End‑of‑interrupt (EOI)
-
-This mapping is required before calling `setup_apic()`.
+    +------------------------------+
+    | Higher-Half Kernel Space     |
+    |------------------------------|
+    | Kernel code                  |
+    | Kernel data                  |
+    | Kernel heap                  |
+    | Kernel stacks                |
+    | LAPIC MMIO mapping           |
+    | Direct physical mapping      |
+    +------------------------------+
+    | Reserved                     |
+    +------------------------------+
+    | User-space mappings          |
+    +------------------------------+
+    | Lower virtual addresses      |
+    +------------------------------+
 
 ---
 
-## 5. Physical Memory Management
+## 3. Higher-Half Direct Mapping (HHDM)
 
-Bulldog currently uses **two allocators** depending on boot stage.
+Bulldog uses a higher-half direct map supplied by the bootloader.
 
----
+Address conversion:
 
-### 5.1 Pre‑Heap Allocator
+    virtual = physical + HHDM_OFFSET
 
-`PreHeapAllocator` provides up to **512 frames** during early boot.
+The HHDM is used for:
 
-- Backed by a fixed array: `[Option<PhysFrame>; 512]`
-- Used before the heap is initialized
-- Returned via `init_temp()` in `BootInfoFrameAllocator`
+    Page-table access
+    Physical-frame access
+    Frame allocator access
+    Kernel memory management
+    ELF segment loading
 
-This allocator is simple and deterministic.
-
----
-
-### 5.2 BootInfoFrameAllocator
-
-After the heap is available, Bulldog switches to `BootInfoFrameAllocator`.
-
-#### Features implemented today
-
-- Stores all discovered frames in a `Vec<PhysFrame>`
-- Tracks allocated frames using a bitmap (`FrameBitmap`)
-- Provides `allocate_frame()` for 4 KiB frames
-- Provides `mark_used_frames()` to mark non‑usable regions
-
-#### Bitmap Details
-
-`FrameBitmap`:
-
-- 32,768 bytes → tracks 262,144 frames (1 GiB)
-- Hard‑coded base address: `0x100000`
-- Tracks **used** frames only
-- No deallocation yet
-- No dynamic resizing
-
-This is a partial implementation of a future full bitmap allocator.
+This allows the kernel to manipulate physical memory using normal virtual addresses.
 
 ---
 
-## 6. Interrupt Stacks (IST) and TSS
+## 4. Paging Infrastructure
 
-`gdt.rs` defines a TSS with **two dedicated IST stacks**:
+Bulldog uses the standard x86_64 four-level paging architecture.
 
-| IST Index | Purpose | Backing Stack |
-|-----------|---------|---------------|
-| 0 | Double fault | `STACK` |
-| 1 | LAPIC timer + page fault | `LAPIC_STACK` |
+Current paging support includes:
 
-Each stack:
+    PML4
+    PDPT
+    PD
+    PT
 
-- Is 128 KiB  
-- Is 16‑byte aligned  
-- Lives in higher‑half kernel space  
-- Is statically allocated  
+Current helper functions:
 
-Guard pages are **not implemented yet**, but planned.
+    active_level_4_table()
+    init_offset_page_table()
+    map_page()
+    map_lapic_mmio()
 
-The GDT contains:
-
-- Kernel code segment  
-- Kernel data segment  
-- TSS descriptor  
-
-`init()` loads:
-
-- GDT  
-- CS/DS/ES/SS  
-- TSS  
+The paging subsystem currently uses standard 4 KiB pages for dynamic mappings.
 
 ---
 
-## 7. Kernel Initialization Flow (Current)
+## 5. Active Page Table Access
 
-The actual initialization sequence is:
+The active page table is obtained by:
 
-1. Bootloader loads kernel and provides memory map + physical offset  
-2. Kernel constructs `OffsetPageTable`  
-3. Pre‑heap allocator is created via `init_temp()`  
-4. LAPIC MMIO region is mapped  
-5. GDT + TSS are initialized  
-6. LAPIC is configured (`setup_apic()`)  
-7. Full `BootInfoFrameAllocator` is created  
-8. Kernel heap is initialized (external to this document)  
+    Reading CR3
+    Converting the physical address through HHDM
+    Producing a mutable PageTable reference
 
-This sequence reflects the real code paths in `lib.rs`, `memory.rs`, `gdt.rs`, and `apic.rs`.
+This allows Bulldog to manipulate the currently active address space directly.
 
 ---
 
-## 8. Missing or Future Features
+## 6. OffsetPageTable
 
-These features are mentioned in earlier design notes but **not yet implemented**:
+Bulldog wraps page-table access using:
 
-- Guard pages around stacks and heap  
-- User‑mode memory  
-- Per‑process page tables  
-- Copy‑on‑write  
-- Memory‑mapped files  
-- Large‑page support  
-- NUMA awareness  
-- Frame deallocation  
-- Per‑CPU frame caches  
+    OffsetPageTable
 
-These will be added after syscalls and privilege switching are complete.
+The offset page table uses the bootloader-provided physical-memory offset.
+
+This abstraction forms the basis for:
+
+    Virtual mappings
+    ELF segment loading
+    User-page allocation
+    LAPIC mapping
 
 ---
 
-## 9. Contributor Notes
+## 7. LAPIC MMIO Mapping
 
-- The memory subsystem is evolving; this document reflects the current state.  
-- LAPIC mapping must occur before enabling the LAPIC timer.  
-- IST stacks must remain aligned and unmoved.  
-- The bitmap allocator currently tracks **used** frames only.  
-- Hard‑coded limits (1 GiB bitmap) will be removed in future revisions.  
-- Avoid assumptions about future user‑mode memory until the syscall subsystem is complete.
+The Local APIC is mapped into higher-half space.
+
+Virtual address:
+
+    LAPIC_VIRT_BASE
+
+Physical address:
+
+    0xFEE00000
+
+Current flags:
+
+    PRESENT
+    WRITABLE
+    NO_EXECUTE
+
+The mapping is required before:
+
+    setup_apic()
+
+is executed.
+
+Current LAPIC usage includes:
+
+    APIC ID access
+    Version reporting
+    Timer configuration
+    End-of-interrupt operations
+
+---
+
+## 8. Physical Memory Management
+
+Bulldog currently uses two allocators.
+
+### 8.1 PreHeapAllocator
+
+Used during very early initialization.
+
+Characteristics:
+
+    Fixed-size allocator
+    512 frame capacity
+    No heap dependency
+    Deterministic behavior
+
+Purpose:
+
+    Bootstrap memory allocation before heap initialization
+
+---
+
+### 8.2 BootInfoFrameAllocator
+
+Used after normal runtime initialization.
+
+Current capabilities:
+
+    Dynamic frame storage
+    Bitmap tracking
+    Frame allocation
+    Used-frame tracking
+    Frame reuse support
+
+This allocator becomes the primary frame allocator after startup.
+
+---
+
+## 9. Frame Bitmap
+
+Bulldog currently tracks frame usage through:
+
+    FrameBitmap
+
+Current configuration:
+
+    32768 bytes
+    262144 tracked frames
+    1 GiB coverage
+    Base address: 0x100000
+
+Capabilities:
+
+    mark_used()
+    mark_free()
+    is_used()
+    contains()
+
+Frames currently support both allocation and reuse.
+
+---
+
+## 10. ELF Memory Mapping
+
+Bulldog loads ELF programs directly into the current address space.
+
+Current workflow:
+
+    Validate ELF
+            ↓
+    Read program headers
+            ↓
+    Allocate frames
+            ↓
+    Create user mappings
+            ↓
+    Copy file contents
+            ↓
+    Zero BSS sections
+            ↓
+    Update page permissions
+
+Supported ELF features:
+
+    Loadable segments
+    Read-only segments
+    Writable segments
+    Executable segments
+    BSS initialization
+
+---
+
+## 11. User Memory Management
+
+User-mode memory is currently implemented.
+
+Current support includes:
+
+    User page allocation
+    User segment mapping
+    User stacks
+    User memory cleanup
+
+This functionality enables:
+
+    /bin/hello
+    /bin/goodbye
+
+and future user applications.
+
+---
+
+## 12. User Page Allocation
+
+Bulldog allocates user memory through:
+
+    map_user_page()
+
+Current page flags:
+
+    PRESENT
+    WRITABLE
+    USER_ACCESSIBLE
+
+Every mapped page is recorded for later cleanup.
+
+---
+
+## 13. User Stack Allocation
+
+User stacks are currently created by:
+
+    alloc_user_stack()
+
+Current implementation:
+
+    64 KiB stack size
+    4 KiB page granularity
+    Higher user virtual addresses
+    Automatic frame allocation
+
+The top of the stack is returned to the ELF loader and later supplied to enter_user_mode().
+
+---
+
+## 14. User Page Tracking
+
+Bulldog tracks pages belonging to the currently executing user program.
+
+Current implementation:
+
+    USER_PAGES
+
+tracked as:
+
+    Virtual page addresses
+
+Pages are recorded whenever:
+
+    User segments are mapped
+    User stack pages are mapped
+
+Purpose:
+
+    Cleanup during sys_exit()
+    Frame reclamation
+    Process isolation
+
+---
+
+## 15. User Memory Cleanup
+
+Process cleanup is currently implemented.
+
+Cleanup occurs through:
+
+    unmap_current_user()
+
+Current cleanup sequence:
+
+    Iterate tracked pages
+    Unmap virtual pages
+    Flush TLB entries
+    Return physical frames
+    Clear page tracker
+
+This mechanism enables:
+
+    hello
+            ↓
+    exit
+            ↓
+    goodbye
+            ↓
+    exit
+
+without memory leaks.
+
+---
+
+## 16. User Access Enforcement
+
+Bulldog provides:
+
+    force_user_access()
+
+This helper ensures:
+
+    USER_ACCESSIBLE flags
+    Executable permissions
+    Correct privilege transitions
+
+are configured throughout the active page-table hierarchy.
+
+This function is used before entering Ring 3.
+
+---
+
+## 17. Interrupt Stacks and TSS
+
+Bulldog currently maintains dedicated IST stacks.
+
+### IST0
+
+Purpose:
+
+    Double-fault handling
+
+### IST1
+
+Purpose:
+
+    LAPIC timer
+    Page-fault handling
+
+Characteristics:
+
+    128 KiB each
+    16-byte alignment
+    Statically allocated
+    Higher-half addresses
+
+Guard pages are planned but not yet implemented.
+
+---
+
+## 18. Current Initialization Flow
+
+Current startup memory flow:
+
+    Bootloader provides memory map
+            ↓
+    OffsetPageTable created
+            ↓
+    PreHeapAllocator created
+            ↓
+    LAPIC MMIO mapped
+            ↓
+    GDT/TSS initialized
+            ↓
+    APIC initialized
+            ↓
+    Full frame allocator created
+            ↓
+    Heap initialized
+            ↓
+    User-mode memory available
+
+This reflects the current implementation path.
+
+---
+
+## 19. Future Work
+
+Not yet implemented:
+
+    Guard pages
+    Per-process address spaces
+    Per-process page tables
+    Copy-on-write
+    Memory-mapped files
+    Large-page support
+    NUMA awareness
+    Per-CPU frame allocators
+
+These features will be revisited after scheduler development.
+
+---
+
+## Contributor Notes
+
+- LAPIC mapping must occur before APIC initialization.
+- HHDM assumptions must match bootloader behavior.
+- User pages must always be tracked for cleanup.
+- IST stacks must remain aligned and mapped.
+- Process cleanup depends on correct page tracking.
+- Memory-management changes should be reviewed against ELF loading and user-mode execution paths.
 
 ---
 

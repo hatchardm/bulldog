@@ -1,135 +1,376 @@
-# Bulldog Kernel – Memory Map (Physical & Virtual)
+## Bulldog Kernel – Memory Map (Physical & Virtual)
 
-This document describes Bulldog’s physical and virtual memory layout, including the higher‑half
-kernel mapping, direct physical map (HHDM), user‑mode layout, and memory region classification.
+Reviewed: November 2026
 
-It complements:
+This document describes Bulldog's current physical and virtual memory layout.
 
-- `memory.md` (paging implementation)
-- `layout.md` (kernel ELF layout)
-- `boot/bootloader.md` (memory map handoff)
+It reflects the implementation found in:
 
----
+    bootloader/src/paging.rs
+    boot-proto/src/lib.rs
+    kernel/src/paging.rs
+    kernel/src/memory.rs
 
-## 1. Physical Memory Layout
-
-The physical memory map is provided by the bootloader via UEFI.
-
-Typical regions:
-
-| Region Type        | Description |
-|--------------------|-------------|
-| Usable RAM         | Allocatable physical frames |
-| Reserved           | Firmware, bootloader, kernel image |
-| ACPI Reclaimable   | ACPI tables |
-| ACPI NVS           | Sleep state memory |
-| MMIO               | Device memory |
-| Loader Data        | Bootloader allocations |
-
-The kernel converts these into `MemoryRegion` entries.
+This document reflects the current UEFI 0.41 architecture.
 
 ---
 
-## 2. Kernel Physical Load Address
+## 1. Overview
 
-The kernel ELF is loaded at a physical address such as:
+Bulldog uses a higher-half kernel architecture.
 
-```
-0x0010_0000
-```
+The bootloader establishes:
 
-This region is identity‑mapped during early boot and later mapped into the higher half.
+    Identity mappings
+    Higher-Half Direct Map (HHDM)
+    Initial page tables
 
----
+before control is transferred to the kernel.
 
-## 3. Virtual Memory Layout
-
-Bulldog uses a higher‑half kernel design:
-
-```
-0x0000_0000_0000_0000 ────────────────────────────────
-    User space
-    Code, data, heap, stack
-──────────────────────────────────────────────────────
-0x0000_FFFF_FFFF_FFFF ────────────────────────────────
-    Reserved (canonical boundary)
-──────────────────────────────────────────────────────
-0xFFFF_8000_0000_0000 ────────────────────────────────
-    Higher‑half kernel
-    Kernel text, data, heap
-──────────────────────────────────────────────────────
-0xFFFF_9000_0000_0000 ────────────────────────────────
-    Direct physical map (HHDM)
-──────────────────────────────────────────────────────
-0xFFFF_FFFF_FFFF_FFFF
-```
-
-### Higher‑Half Kernel Region
-
-Kernel ELF sections are mapped here:
-
-- `.text` → RX  
-- `.rodata` → R  
-- `.data` → RW  
-- `.bss` → RW (zeroed)
-
-### Direct Physical Map (HHDM)
-
-Maps all physical memory contiguously:
-
-```
-virtual = physical + HHDM_OFFSET
-```
-
-This enables:
-
-- Fast frame allocator  
-- Simple MMIO access  
-- Deterministic physical addressing
+The kernel then inherits this virtual-memory environment and extends it as required.
 
 ---
 
-## 4. User‑Mode Layout
+## 2. Physical Memory Map
 
-User processes receive:
+The physical memory map is provided by the bootloader through:
 
-- Code/data segments from ELF loader  
-- Heap (future)  
-- Stack at top of user space  
-- Per‑process page table  
-- No access to kernel space
+    BootInfo
+
+Memory regions are represented using:
+
+    MemoryRegion
+
+Current region classifications include:
+
+    Usable
+    Reserved
+    Acpi
+    Mmio
+
+The kernel uses this information to construct:
+
+    Frame allocators
+    Heap allocators
+    Memory-management structures
 
 ---
 
-## 5. Kernel Page Tables
+## 3. Physical Memory Regions
 
-Kernel page tables include:
+Typical physical regions include:
 
-- Higher‑half kernel mapping  
-- Direct physical map  
-- Global mappings (APIC, MMIO)  
-- Temporary identity map (removed after init)
+### Usable RAM
+
+Purpose:
+
+    Page allocation
+    Heap allocation
+    User-memory allocation
 
 ---
 
-## 6. Future Enhancements
+### Reserved Memory
 
-- Guard pages for kernel stacks  
-- Per‑CPU memory regions  
-- KASLR  
-- NUMA awareness  
-- Memory‑mapped files (VFS integration)
+Purpose:
+
+    Kernel image
+    Firmware structures
+    Protected regions
+
+---
+
+### ACPI Regions
+
+Purpose:
+
+    ACPI tables
+    Firmware information
+
+Current use:
+
+    Reserved only
+
+---
+
+### MMIO Regions
+
+Purpose:
+
+    Hardware devices
+    APIC registers
+    Future drivers
+
+These regions are never allocated as normal RAM.
+
+---
+
+## 4. Kernel Physical Image
+
+The bootloader loads:
+
+    kernel.elf
+
+into physical memory before kernel startup.
+
+BootInfo records:
+
+    kernel_phys_start
+    kernel_phys_end
+    kernel_entry_phys
+
+These values describe the executable kernel image.
+
+---
+
+## 5. Virtual Address Layout
+
+Current conceptual layout:
+
+    0xFFFFFFFFFFFFFFFF
+    ────────────────────────────
+        Higher-half kernel
+        Kernel heap
+        Kernel stacks
+        HHDM
+        MMIO mappings
+    ────────────────────────────
+    0xFFFF800000000000
+        HHDM Base
+    ────────────────────────────
+        User mappings
+    ────────────────────────────
+    0x0000000000000000
+
+This layout reflects the current bootloader-created address-space model.
+
+---
+
+## 6. Higher-Half Kernel Region
+
+The higher-half region contains:
+
+    Kernel text
+    Kernel data
+    Kernel heap
+    Kernel stacks
+    Runtime kernel structures
+
+Kernel memory is not marked:
+
+    USER_ACCESSIBLE
+
+and therefore cannot be accessed from Ring 3.
+
+---
+
+## 7. Higher-Half Direct Map (HHDM)
+
+Bulldog currently uses:
+
+    HHDM_BASE
+    0xFFFF800000000000
+
+Address translation:
+
+    virtual = physical + HHDM_BASE
+
+The HHDM provides direct access to:
+
+    Physical memory
+    Page tables
+    Frame allocator structures
+    ELF loading buffers
+
+The HHDM is created by the bootloader and inherited by the kernel.
+
+---
+
+## 8. Framebuffer Mapping
+
+The bootloader provides:
+
+    Framebuffer physical address
+
+During paging initialization Bulldog computes:
+
+    framebuffer_virt
+
+using the physical-memory offset.
+
+This allows the framebuffer to be accessed through virtual memory.
+
+Current consumers include:
+
+    Framebuffer subsystem
+    Writer subsystem
+    Logger subsystem
+
+---
+
+## 9. LAPIC Mapping
+
+The LAPIC is mapped into kernel address space.
+
+Current mapping:
+
+    Physical:
+        0xFEE00000
+
+    Virtual:
+        LAPIC_VIRT_BASE
+
+Flags:
+
+    PRESENT
+    WRITABLE
+    NO_EXECUTE
+
+This mapping exists before APIC initialization begins.
+
+---
+
+## 10. User Memory Layout
+
+Bulldog currently supports user-mode execution.
+
+Current user allocations include:
+
+    ELF segments
+    User stacks
+
+Examples:
+
+    /bin/hello
+    /bin/goodbye
+
+Current user pages exist inside the active address space and are marked:
+
+    USER_ACCESSIBLE
+
+Separate per-process page tables are not yet implemented.
+
+---
+
+## 11. User Stack Layout
+
+Current user stacks are created using:
+
+    alloc_user_stack()
+
+Characteristics:
+
+    64 KiB
+    4 KiB pages
+    USER_ACCESSIBLE mappings
+
+The stack-top address is passed to:
+
+    enter_user_mode()
+
+during process startup.
+
+---
+
+## 12. Current Kernel Mappings
+
+Current kernel mappings include:
+
+    Higher-half kernel
+    HHDM
+    LAPIC MMIO
+    Framebuffer
+    Heap
+    GDT/TSS structures
+    User pages
+
+These mappings exist simultaneously within the active address space.
+
+---
+
+## 13. Current User Mappings
+
+Current user mappings include:
+
+    ELF text
+    ELF data
+    ELF BSS
+    User stack
+
+Pages are tracked through:
+
+    USER_PAGES
+
+to support cleanup and frame recycling.
+
+---
+
+## 14. Current Memory Lifecycle
+
+Current boot flow:
+
+    Bootloader discovers memory
+            ↓
+    BootInfo created
+            ↓
+    Kernel inherits mappings
+            ↓
+    Frame allocator created
+            ↓
+    Heap initialized
+            ↓
+    User memory available
+            ↓
+    Process executes
+            ↓
+    Memory reclaimed on exit
+
+This reflects the current implementation rather than a planned design.
+
+---
+
+## 15. Current Limitations
+
+Not currently implemented:
+
+    Per-process page tables
+    Guard pages
+    Shared memory
+    Demand paging
+    Memory-mapped files
+    Copy-on-write
+    NUMA support
+
+These features remain future work.
+
+---
+
+## 16. Future Enhancements
+
+Planned future improvements:
+
+    Per-process address spaces
+    Scheduler-aware memory management
+    Shared memory regions
+    Copy-on-write support
+    Memory-mapped files
+    KASLR
+    NUMA-aware allocation
+
+These will build upon the current architecture.
 
 ---
 
 ## Contributor Notes
 
-- Keep memory layout diagrams updated  
-- Document all new mappings  
-- Maintain canonical address boundaries  
-- Avoid mixing user and kernel mappings
+- HHDM assumptions must remain synchronized with the bootloader.
+- BootInfo remains the authoritative source for memory layout information.
+- User-mode support currently relies on USER_ACCESSIBLE mappings.
+- Review this document whenever paging or HHDM behavior changes.
+- Keep virtual address diagrams synchronized with implementation.
 
 ---
 
 ## License
-MIT or Apache 2.0 — to be determined.
+
+MIT or Apache 2.0 — TBD.

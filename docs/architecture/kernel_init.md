@@ -1,280 +1,570 @@
-# Bulldog Kernel – Kernel Initialization (`kernel_init` in `lib.rs`)
+## Bulldog Kernel – Startup and Kernel Initialization
 
-This document describes Bulldog’s *current* kernel initialization sequence as implemented in the `kernel_init` function located in `src/lib.rs`. It reflects the real behavior of:
+Reviewed: November 2026
 
-- `memory.rs` (paging, allocators, LAPIC MMIO mapping)
-- `gdt.rs` and `stack.rs` (GDT, TSS, IST stacks)
-- `interrupts.rs` (IDT and LAPIC timer vector)
-- `syscall` subsystem (syscall entry setup)
-- `allocator` (kernel heap)
-- `apic.rs` (LAPIC initialization)
+This document describes the current startup path of the Bulldog kernel from entry into the kernel crate through subsystem initialization and optional user-mode execution.
 
-This is a description of the **current implementation**, not future user‑mode or SMP plans.
+It reflects the implementation found in:
 
----
+    kernel/src/lib.rs
 
-## 1. Purpose of `kernel_init`
+and related subsystems:
 
-`kernel_init` is the central bootstrap routine executed after the bootloader hands control to the kernel. It is responsible for:
+    memory.rs
+    gdt.rs
+    interrupts.rs
+    apic.rs
+    syscall.rs
+    vfs.rs
+    process.rs
+    fs/*
 
-- Establishing paging and memory allocators  
-- Initializing the kernel heap  
-- Setting up CPU descriptor tables (GDT, IDT, TSS)  
-- Registering the syscall entry point  
-- Mapping and initializing the LAPIC  
-- Preparing the LAPIC IST stack  
-- Enabling interrupts  
-
-Once `kernel_init` completes, the kernel is fully operational and ready to handle interrupts, syscalls, and memory allocation.
+This document describes the current implementation rather than future architecture plans.
 
 ---
 
-## 2. High‑Level Initialization Order
+## 1. Startup Overview
 
-The real initialization sequence is:
+Bulldog startup currently follows this sequence:
 
-1. Disable legacy PIC  
-2. Create the paging mapper  
-3. Log physical memory regions  
-4. Create the temporary pre‑heap frame allocator  
-5. Initialize the kernel heap  
-6. Initialize the file descriptor table  
-7. Finalize the full frame allocator  
-8. Log memory regions with virtual addresses  
-9. Initialize GDT and IDT  
-10. Register syscall handler  
-11. (Optional) run syscall tests  
-12. Map LAPIC MMIO  
-13. Map and mark LAPIC IST stack pages  
-14. Mark used frames in the bitmap allocator  
-15. Remap LAPIC stack pages with correct flags  
-16. Initialize LAPIC (timer, SVR, ID/version)  
-17. Enable interrupts  
+    bootloader
+            ↓
+    kernel-bin
+            ↓
+    kernel_main()
+            ↓
+    kernel_init()
+            ↓
+    Heap Initialization
+            ↓
+    FAT32 Initialization
+            ↓
+    CPU Initialization
+            ↓
+    Syscalls
+            ↓
+    APIC
+            ↓
+    Interrupt Enable
+            ↓
+    VFS
+            ↓
+    File Descriptors
+            ↓
+    Optional User Mode
+            ↓
+    Idle Loop
 
-This sequence reflects the exact order in the source code.
+The startup process is divided into two major stages:
 
----
+    kernel_main()
+    kernel_init()
 
-## 3. Paging and Mapper Initialization
-
-The kernel begins by creating the paging mapper:
-
-```rust
-let mut mapper = unsafe { init_offset_page_table(phys_mem_offset) };
-```
-
-This uses the bootloader‑provided physical memory offset to access page tables through the direct map.
-
-Memory regions from the bootloader are logged for debugging.
-
----
-
-## 4. Temporary Pre‑Heap Frame Allocator
-
-Before the heap exists, Bulldog uses a temporary allocator:
-
-```rust
-let (temp_frames, memory_map) = BootInfoFrameAllocator::init_temp(memory_regions);
-let mut temp_allocator = PreHeapAllocator { ... };
-```
-
-This allocator:
-
-- Provides up to 512 frames  
-- Is used only during heap initialization  
-- Is deterministic and simple  
+Each stage has distinct responsibilities.
 
 ---
 
-## 5. Kernel Heap Initialization
+## 2. Responsibilities of kernel_main()
 
-The heap is initialized using the temporary allocator:
+kernel_main() is responsible for preparing the kernel runtime environment.
 
-```rust
-allocator::init_heap(&mut mapper, &mut temp_allocator)
-```
+Its responsibilities include:
 
-Once the heap is ready, higher‑level structures (like `Box`, `Vec`, `BTreeMap`) become usable.
+    FAT image registration
+    Framebuffer initialization
+    Writer initialization
+    Logger initialization
+    Memory-map preparation
+    Transfer to kernel_init()
 
-The FD table is initialized immediately afterward:
-
-```rust
-init_fd_table_with_std();
-```
-
----
-
-## 6. Final Frame Allocator
-
-After the heap is available, the kernel constructs the full bitmap‑based frame allocator:
-
-```rust
-let frames = temp_allocator.into_vec();
-let mut frame_allocator = BootInfoFrameAllocator::new(memory_map, frames);
-```
-
-This allocator:
-
-- Tracks frames using a bitmap  
-- Supports marking used frames  
-- Will eventually support deallocation (future work)  
+The function acts as the bridge between bootloader handoff and subsystem initialization.
 
 ---
 
-## 7. Logging Virtual Memory Regions
+## 3. kernel_main() Initialization Sequence
 
-The kernel logs each memory region again, this time with its virtual address computed via:
+Current flow:
 
-```
-virt = region.start + phys_mem_offset
-```
+    Receive BootInfo
+            ↓
+    Store FAT image information
+            ↓
+    Create framebuffer
+            ↓
+    Initialize writer
+            ↓
+    Initialize logger
+            ↓
+    Process memory information
+            ↓
+    Execute kernel_init()
+            ↓
+    Enter hlt_loop()
 
-This helps verify the direct physical map.
+When kernel_init() returns the kernel enters:
 
----
+    hlt_loop()
 
-## 8. CPU Tables: GDT and IDT
-
-The kernel initializes:
-
-- **GDT** (code/data segments + TSS)
-- **IDT** (interrupt handlers)
-
-```rust
-gdt::init();
-interrupts::init_idt();
-```
-
-This must occur before enabling interrupts or LAPIC timers.
-
----
-
-## 9. Syscall Initialization
-
-The syscall entry point is registered:
-
-```rust
-crate::syscall::init_syscall();
-```
-
-This must occur **before interrupts are enabled**, ensuring the syscall vector is valid.
-
-If the `syscall_tests` feature is enabled, the syscall harness runs here.
+which represents the normal idle state.
 
 ---
 
-## 10. LAPIC MMIO Mapping
+## 4. FAT Image Registration
 
-The LAPIC MMIO region is mapped into higher‑half kernel space:
+The bootloader passes:
 
-```rust
-map_lapic_mmio(&mut mapper, &mut frame_allocator);
-```
+    fat_phys_addr
+    fat_size
 
-This maps:
+through BootInfo.
 
-- Virtual: `LAPIC_VIRT_BASE`
-- Physical: `0xFEE0_0000`
+kernel_main() stores these values globally for later filesystem initialization.
 
-The LAPIC cannot be accessed until this mapping exists.
+These values are later used to create:
 
----
+    RamDisk
 
-## 11. LAPIC IST Stack Mapping
-
-The LAPIC timer and page‑fault handlers run on IST1, backed by `LAPIC_STACK`.
-
-`kernel_init`:
-
-1. Computes the virtual range of the LAPIC stack  
-2. Marks all frames backing the stack as “used” in the bitmap allocator  
-3. Remaps each page with `PRESENT | WRITABLE` flags  
-4. Flushes TLB entries after each unmap/map  
-
-This ensures:
-
-- The LAPIC IST stack is fully mapped  
-- No pages are accidentally reused  
-- The stack has correct permissions  
-
-This is a unique part of Bulldog’s initialization pipeline.
+during FAT32 initialization.
 
 ---
 
-## 12. Marking Used Frames
+## 5. Framebuffer Initialization
 
-The frame allocator marks all non‑usable frames:
+kernel_main() creates:
 
-```rust
-frame_allocator.mark_used_frames();
-```
+    KernelFramebuffer
 
-Then logs each used frame for debugging.
+using framebuffer information derived from BootInfo.
 
----
+Current responsibilities:
 
-## 13. LAPIC Initialization
+    Runtime framebuffer access
+    Screen clearing
+    Pixel-format detection
+    Boot diagnostics
 
-The LAPIC is initialized:
+The framebuffer becomes the foundation of:
 
-```rust
-setup_apic();
-```
-
-This performs:
-
-- MSR read of LAPIC base  
-- Enable bit verification  
-- Logging LAPIC ID and version  
-- Writing SVR (enable + spurious vector)  
-- Configuring periodic timer  
-- Setting initial count  
-- Logging current count  
+    Writer output
+    Logger output
+    Panic diagnostics
 
 ---
 
-## 14. Enabling Interrupts
+## 6. Writer Initialization
 
-Finally, interrupts are enabled:
+The Writer subsystem is initialized before most other kernel code executes.
 
-```rust
-x86_64::instructions::interrupts::enable();
-```
+Current responsibilities include:
+
+    Text rendering
+    Console output
+    In-kernel diagnostics
+
+The Writer becomes globally available through:
+
+    WRITER
+
+after initialization.
+
+---
+
+## 7. Logger Initialization
+
+The logging subsystem is brought online during kernel_main().
+
+Current logging targets include:
+
+    Serial output
+    Framebuffer output
+
+This provides diagnostics for all later initialization stages.
+
+---
+
+## 8. Transition to kernel_init()
+
+Once basic runtime facilities exist:
+
+    Framebuffer
+    Writer
+    Logger
+
+control transfers to:
+
+    kernel_init()
+
+This marks the beginning of kernel subsystem initialization.
+
+---
+
+## 9. Responsibilities of kernel_init()
+
+kernel_init() is the central subsystem bootstrap routine.
+
+Current responsibilities include:
+
+    Heap initialization
+    FAT32 initialization
+    Root directory enumeration
+    GDT setup
+    TSS setup
+    Legacy PIC disable
+    IDT setup
+    Syscall initialization
+    LAPIC mapping
+    APIC initialization
+    Interrupt enable
+    VFS initialization
+    File-descriptor initialization
+    Optional user-mode startup
+
+Once complete, the kernel is fully operational.
+
+---
+
+## 10. Heap Initialization
+
+The first major task is heap initialization.
+
+Requirements:
+
+    Mapper initialized
+    Frame allocator initialized
+
+Current result:
+
+    Dynamic allocation enabled
+    Vec available
+    Box available
+
+Many higher-level subsystems depend upon a functioning heap.
+
+---
+
+## 11. FAT32 Initialization
+
+After the heap is operational Bulldog initializes FAT32.
+
+Current sequence:
+
+    Create RamDisk
+            ↓
+    Read BPB
+            ↓
+    Load FAT table
+            ↓
+    Register global FAT
+            ↓
+    Validate filesystem
+
+Initialization information is logged for verification.
+
+This stage provides filesystem access for later ELF loading.
+
+---
+
+## 12. Filesystem Discovery
+
+After FAT initialization:
+
+    Root directory entries
+
+are enumerated and logged.
+
+This confirms:
+
+    FAT image validity
+    FAT table correctness
+    Root-cluster accessibility
+    User program availability
+
+The discovered files become available through the VFS.
+
+---
+
+## 13. GDT and TSS Initialization
+
+Bulldog initializes:
+
+    Global Descriptor Table
+    Task State Segment
+
+This provides:
+
+    Ring 0 execution environment
+    Ring 3 transition support
+    IST stack configuration
+
+This stage must complete before interrupts are enabled.
+
+---
+
+## 14. Legacy PIC Disable
+
+Bulldog disables the legacy PIC:
+
+    PIC1
+    PIC2
+
+by masking all IRQ lines.
+
+This prevents legacy interrupt delivery and ensures that interrupt handling occurs through APIC infrastructure.
+
+---
+
+## 15. Interrupt Descriptor Table
+
+The kernel installs the IDT.
+
+Current handlers include:
+
+    CPU exceptions
+    Page fault handler
+    Double fault handler
+    LAPIC timer handler
+    Spurious interrupt handler
+
+The IDT must be operational before interrupts are enabled.
+
+---
+
+## 16. Syscall Initialization
+
+The syscall subsystem installs:
+
+    System-call entry mechanism
+
+Current capabilities include:
+
+    Process exit
+    File-descriptor operations
+    Memory-related services
+    User/kernel transitions
+
+The syscall entry point must be installed before user-mode execution.
+
+---
+
+## 17. LAPIC MMIO Mapping
+
+Before APIC initialization:
+
+    LAPIC MMIO
+
+must be mapped into virtual memory.
+
+Current implementation maps:
+
+    Physical:
+        0xFEE00000
+
+    Virtual:
+        LAPIC_VIRT_BASE
+
+This permits safe APIC access from kernel code.
+
+---
+
+## 18. APIC Initialization
+
+The Local APIC is initialized after MMIO mapping.
+
+Current initialization includes:
+
+    APIC discovery
+    APIC enable
+    APIC ID reporting
+    APIC version reporting
+    LAPIC timer configuration
+    Spurious interrupt configuration
+
+The APIC timer becomes the foundation of future scheduling work.
+
+---
+
+## 19. Interrupt Enable
+
+Once all required infrastructure exists:
+
+    x86_64::instructions::interrupts::enable()
+
+is executed.
 
 At this point:
 
-- GDT/TSS are active  
-- IDT is active  
-- Syscalls are registered  
-- LAPIC timer is running  
-- Heap is initialized  
-- Frame allocator is active  
+    APIC is active
+    IDT is loaded
+    Interrupt delivery is possible
 
-The kernel is fully operational.
+The kernel can safely receive interrupts.
 
 ---
 
-## 15. Future Work
+## 20. Virtual File System Initialization
 
-Planned improvements:
+After interrupts are enabled:
 
-- Guard pages around IST stacks  
-- User‑mode address spaces  
-- Per‑process page tables  
-- IOAPIC initialization  
-- SMP bring‑up and IPIs  
-- Scheduler integration with LAPIC timer  
-- Dynamic LAPIC timer calibration  
+    vfs_init()
+
+is executed.
+
+Current responsibilities:
+
+    Filesystem abstraction
+    File access services
+    User-program loading support
+
+The VFS becomes the primary interface used by user-mode loading.
 
 ---
 
-## 16. Contributor Notes
+## 21. File Descriptor Initialization
 
-- `kernel_init` must run before any interrupts occur  
-- LAPIC MMIO mapping must precede `setup_apic()`  
-- Syscall handler must be registered before enabling interrupts  
-- IST stacks must remain aligned and unmoved  
-- Logging is essential for early bring‑up debugging  
+The kernel initializes standard descriptors:
+
+    stdin
+    stdout
+    stderr
+
+This provides a consistent runtime environment for user processes.
+
+---
+
+## 22. Optional User-Mode Execution
+
+Depending on compile-time features:
+
+    usermode_hello
+    usermode_goodbye
+    usermode_chain
+
+kernel_init() may immediately execute a user program.
+
+Current supported targets:
+
+    /bin/hello
+    /bin/goodbye
+
+User-mode support is operational.
+
+---
+
+## 23. Usermode Execution Path
+
+Current flow:
+
+    Read ELF
+            ↓
+    Validate ELF
+            ↓
+    Load Program Headers
+            ↓
+    Map ELF Segments
+            ↓
+    Allocate User Stack
+            ↓
+    Create Process Record
+            ↓
+    Update Process Metadata
+            ↓
+    Enter Ring 3
+
+This path forms the foundation of Bulldog's process subsystem.
+
+---
+
+## 24. Process Integration
+
+During usermode startup Bulldog performs:
+
+    create_process()
+    update_process_execution()
+    set_current_pid()
+    mark_running()
+
+The process subsystem therefore participates directly in kernel initialization.
+
+Process lifecycle management is documented separately in:
+
+    processes.md
+
+---
+
+## 25. Usermode Chaining
+
+Bulldog currently supports chained user-process execution.
+
+Current verified sequence:
+
+    /bin/hello
+            ↓
+    sys_exit()
+            ↓
+    Cleanup
+            ↓
+    /bin/goodbye
+            ↓
+    sys_exit()
+            ↓
+    Kernel Idle
+
+This mechanism validates:
+
+    Process cleanup
+    Frame recycling
+    Re-entry into Ring 3
+    Process-table management
+
+---
+
+## 26. Completion of kernel_init()
+
+When initialization completes:
+
+    Ok(())
+
+is returned and either:
+
+    User-mode execution begins
+
+or:
+
+    hlt_loop()
+
+is entered,
+
+which eventually becomes the kernel's idle state.
+
+---
+
+## 27. Future Work
+
+Planned future improvements include:
+
+    Scheduler
+    Context switching
+    Per-process page tables
+    Copy-on-write
+    Shared memory
+    SMP support
+    IOAPIC integration
+    Advanced process management
+
+These systems will build upon the infrastructure established by kernel_init().
+
+---
+
+## Contributor Notes
+
+- Keep kernel_main() focused on runtime setup.
+- Keep kernel_init() focused on subsystem initialization.
+- Do not move filesystem logic into kernel_main().
+- Do not move framebuffer creation into kernel_init().
+- Syscalls must be initialized before user-mode execution.
+- APIC setup must occur after LAPIC MMIO mapping.
+- Future scheduler work should build on the existing process subsystem.
+- The current initialization order is intentional and should be changed carefully.
 
 ---
 

@@ -1,228 +1,443 @@
-# Bulldog Kernel – Process Model and Context Switching
+## Bulldog Kernel – Process Management and Scheduler Architecture
 
-This document describes Bulldog’s planned process model, including task structures, context
-switching, scheduling foundations, and user‑mode execution. While full process management is
-a future milestone, this document defines the architectural direction and invariants that
-contributors should follow as the subsystem evolves.
+Reviewed: November 2026
 
-Bulldog targets the `x86_64-bulldog` architecture and uses a higher‑half kernel design with
-strict separation between kernel and user space.
+This document describes Bulldog's current process-management subsystem and the future scheduler architecture that will build upon it.
 
----
+Unlike earlier versions of Bulldog, process management is no longer a planned subsystem.
 
-## Overview
+The kernel currently supports:
 
-Bulldog’s process subsystem is designed around the following goals:
+    Process creation
+    PID allocation
+    Process tracking
+    User-mode execution
+    ELF loading
+    Process state transitions
+    Exit code recording
+    Process table dumping
+    Process lifecycle management
 
-- Clear separation between kernel and user execution  
-- Deterministic context switching  
-- Minimal, well‑defined process structures  
-- Safe transitions between privilege levels  
-- Compatibility with the syscall interface  
-- Contributor‑friendly debugging and logging  
+Scheduling, context switching, and threading remain future work.
 
-This document outlines the architecture that future scheduling and multitasking features
-will build upon.
+Bulldog uses a higher-half x86_64 architecture with strict separation between kernel and user execution.
 
 ---
 
-## Process Model (Planned)
+## 1. Current Process Model
 
-Bulldog will use a simple process model:
+Bulldog currently implements a kernel-owned process table.
 
-- Each process has its own virtual address space  
-- Each process has a user stack and heap  
-- Kernel stacks are per‑CPU, not per‑process  
-- Processes interact with the kernel exclusively through syscalls  
-- Scheduling is cooperative at first, then preemptive via LAPIC timer  
+Each process record stores execution metadata and lifecycle information.
 
-A process will be represented by a `Process` structure containing:
+Current responsibilities include:
 
-- Page‑table root (CR3)  
-- User stack pointer  
-- User instruction pointer  
-- Process ID  
-- State (running, waiting, terminated)  
-- Kernel bookkeeping fields  
+    PID assignment
+    State tracking
+    Entry-point tracking
+    User stack tracking
+    Exit-code tracking
+    Process history retention
 
-This structure is intentionally minimal to keep early development simple.
+Process records remain in the process table after termination for diagnostics and future scheduler integration.
 
 ---
 
-## Thread Model (Future)
+## 2. Current Process Structure
 
-Bulldog will eventually support threads:
+Current process records contain:
 
-- Each thread has its own user stack  
-- Threads share a process address space  
-- Kernel stacks remain per‑CPU  
-- Scheduling decisions operate at the thread level  
+    pid
+    state
+    name
+    entry
+    stack_top
+    exit_code
 
-Thread support will be added after basic process scheduling is stable.
+These fields allow Bulldog to track a process from creation until termination.
 
----
+Future fields under consideration:
 
-## Context Switching
+    page_set
+    parent_pid
+    kernel_stack
+    scheduling_metadata
 
-Context switching is the act of saving the current CPU state and restoring another.  
-Bulldog will use a deterministic, minimal context frame.
-
-A context switch must save:
-
-- General‑purpose registers  
-- Instruction pointer (RIP)  
-- Stack pointer (RSP)  
-- Segment selectors (CS, SS for user mode)  
-- RFLAGS  
-
-Context switching will occur:
-
-- On syscall return (cooperative scheduling)  
-- On LAPIC timer interrupt (preemptive scheduling, future)  
-- When a process blocks or exits  
-
-Example context frame:
-
-```
-struct Context {
-    r15, r14, r13, r12,
-    r11, r10, r9, r8,
-    rsi, rdi, rbp, rdx,
-    rcx, rbx, rax,
-    rip, rsp, rflags,
-    cs, ss
-}
-```
-
-This frame is stored on the kernel stack during a switch.
+The design intentionally remains minimal until scheduler implementation begins.
 
 ---
 
-## Scheduling
+## 3. PID Management
 
-Bulldog’s scheduler will evolve in stages:
+Bulldog currently supports:
 
-### Stage 1: Cooperative Scheduling
+    Automatic PID allocation
+    Unique PID assignment
+    Current PID tracking
 
-- Processes yield explicitly via a syscall  
-- No timer interrupts  
-- Simple round‑robin or single‑task execution  
+The kernel stores the PID of the currently executing user process.
 
-### Stage 2: Preemptive Scheduling (Future)
+This allows:
 
-- LAPIC timer interrupts trigger scheduling  
-- Kernel saves current context  
-- Next runnable process is selected  
-- Context is restored and execution continues  
+    sys_exit()
+    state updates
+    process accounting
+    future scheduling integration
 
-### Stage 3: Advanced Scheduling (Future)
-
-- Priorities  
-- Sleep queues  
-- Blocking I/O  
-- Multi‑CPU load balancing  
-
-The scheduler will be modular to support incremental development.
+Current PID tracking has been verified through user-mode execution tests.
 
 ---
 
-## User‑Mode Execution
+## 4. Process States
 
-User‑mode execution requires:
+Current implemented states:
 
-- A valid user stack  
-- A valid user instruction pointer  
-- A process‑specific page table  
-- Correct GDT/TSS configuration  
-- Correct IDT entries for syscalls and interrupts  
+    Ready
+    Running
+    Exited
 
-Transition to user mode uses:
+State transitions currently verified:
 
-```
-iretq
-```
+    Ready
+      ↓
+    Running
+      ↓
+    Exited
 
-with a frame containing:
+These state transitions are recorded in the process table.
 
-- User RIP  
-- User CS (DPL=3)  
-- RFLAGS  
-- User RSP  
-- User SS (DPL=3)  
+Future scheduler work may introduce:
 
-This is the same mechanism used for syscall returns.
+    Blocked
+    Sleeping
+    Waiting
+    Zombie
 
 ---
 
-## Syscall Interaction
+## 5. Process Creation
 
-Syscalls are the only legal entry point from user mode into the kernel.
+Process creation is currently implemented.
+
+When a user program is launched:
+
+    Process record created
+    PID assigned
+    Program path recorded
+    Process added to table
+
+Current implementation begins with:
+
+    create_process()
+
+The process initially enters the Ready state.
+
+Additional execution information is added later during ELF loading.
+
+---
+
+## 6. ELF Integration
+
+Bulldog currently creates process records during ELF execution.
+
+The loader performs:
+
+    ELF validation
+    Program-header parsing
+    Segment mapping
+    Entry-point extraction
+    User-stack allocation
+
+The process record is updated with:
+
+    Entry address
+    User stack address
+
+Stored values originate directly from:
+
+    ELF header
+    User stack allocator
+
+This information is later used by user-mode entry and process tracking.
+
+---
+
+## 7. User-Mode Execution
+
+User-mode execution is currently operational.
+
+Bulldog supports:
+
+    ELF loading
+    User-segment mapping
+    User-stack allocation
+    Ring 3 entry
+    Syscall handling
+    Return to kernel mode
+
+Verified programs include:
+
+    /bin/hello
+    /bin/goodbye
+
+Current execution path:
+
+    Load ELF
+            ↓
+    Map Segments
+            ↓
+    Allocate User Stack
+            ↓
+    Enter Ring 3
+            ↓
+    Execute User Program
+            ↓
+    sys_exit()
+            ↓
+    Return To Kernel
+
+---
+
+## 8. Process Lifecycle
+
+The currently verified lifecycle is:
+
+    create_process()
+            ↓
+    Ready
+            ↓
+    Load ELF
+            ↓
+    Update Entry Address
+            ↓
+    Allocate User Stack
+            ↓
+    Running
+            ↓
+    Enter User Mode
+            ↓
+    sys_exit()
+            ↓
+    Exited
+
+This lifecycle has been validated through serial logging.
+
+---
+
+## 9. Process Exit Handling
+
+Process termination is currently implemented.
+
+A process may terminate through:
+
+    sys_exit()
+
+Current termination sequence:
+
+    Record exit code
+    Mark process exited
+    Clear file descriptors
+    Unmap user memory
+    Apply post-exit policy
+    Return to kernel
+
+The process record remains available after termination.
+
+This allows:
+
+    Diagnostics
+    Process-table dumping
+    Future wait() support
+    Future scheduler support
+
+---
+
+## 10. Process Chaining
+
+Bulldog currently supports chained execution.
+
+Verified sequence:
+
+    /bin/hello
+            ↓
+    sys_exit()
+            ↓
+    Cleanup
+            ↓
+    /bin/goodbye
+            ↓
+    sys_exit()
+            ↓
+    Kernel Idle
+
+This capability is used to validate repeated user-mode transitions and process tracking.
+
+---
+
+## 11. Process Table
+
+The process table acts as the kernel's authoritative process database.
+
+Current capabilities:
+
+    Insert process
+    Lookup process
+    Update process state
+    Update entry address
+    Update stack address
+    Store exit code
+    Dump process table
+
+Example output:
+
+    pid=1 state=Exited exit=Some(0)
+    pid=2 state=Exited exit=Some(0)
+
+Process records intentionally persist after exit.
+
+---
+
+## 12. Context Switching (Future)
+
+Full context switching is not currently implemented.
+
+Future context switching will save and restore:
+
+    General-purpose registers
+    RIP
+    RSP
+    RFLAGS
+    CS
+    SS
+
+Context switching will eventually support:
+
+    Scheduler transitions
+    User-mode multitasking
+    Process blocking
+
+This subsystem has not yet begun implementation.
+
+---
+
+## 13. Scheduling Architecture (Future)
+
+Scheduling remains future work.
+
+Current status:
+
+    Process Management  -> Implemented
+    Scheduler           -> Not Implemented
+
+Planned stages:
+
+### Stage 1
+
+    Cooperative scheduling
+
+Capabilities:
+
+    Explicit yield
+    Process selection
+    Ready queue
+
+### Stage 2
+
+    Preemptive scheduling
+
+Capabilities:
+
+    LAPIC timer scheduling
+    Context switching
+    Time slicing
+
+### Stage 3
+
+    Advanced scheduling
+
+Capabilities:
+
+    Priorities
+    Sleep queues
+    Blocking I/O
+    SMP load balancing
+
+---
+
+## 14. Thread Model (Future)
+
+Threading is not currently implemented.
+
+Planned architecture:
+
+    Multiple threads per process
+    Shared address spaces
+    Separate user stacks
+    Scheduler-driven execution
+
+Thread support will be investigated after scheduler implementation stabilizes.
+
+---
+
+## 15. Syscall Integration
+
+Syscalls are the only legal interface between user mode and kernel mode.
+
+Current responsibilities include:
+
+    Process exit
+    File operations
+    File descriptor management
+    Memory operations
 
 Syscalls:
 
-- Save user context  
-- Switch to kernel stack via TSS  
-- Execute kernel logic  
-- Optionally trigger a context switch  
-- Return via `iretq`  
+    Save user context
+    Execute kernel logic
+    Return to user mode
 
-Syscalls must not:
-
-- Modify user registers except return value  
-- Corrupt user stack or memory  
-- Leave interrupts disabled  
-
-See:  
-`../syscall.md`  
-`../privilege-switching.md`  
-`../syscall-harness-guide.md`
-
----
-
-## Process Creation (Future)
-
-Process creation will involve:
-
-1. Allocating a new page table  
-2. Mapping user code and data  
-3. Allocating a user stack  
-4. Initializing a context frame  
-5. Adding the process to the scheduler  
-
-Later enhancements:
-
-- ELF loader  
-- Copy‑on‑write fork  
-- Exec system call  
-
----
-
-## Process Termination
-
-A process may terminate via:
-
-- `sys_exit`  
-- Fatal exception  
-- Kernel‑initiated kill (future)  
-
-Termination steps:
-
-- Mark process as terminated  
-- Free user memory regions  
-- Free page tables  
-- Remove from scheduler  
+Future versions may also trigger scheduling decisions.
 
 ---
 
 ## Contributor Notes
 
-- Keep process structures minimal and well‑documented  
-- Ensure context switching remains deterministic  
-- Avoid storing kernel pointers in user‑accessible memory  
-- Document all new scheduling states and transitions  
-- Maintain compatibility with the syscall interface  
+- Keep process structures minimal and well documented.
+- Process records are authoritative.
+- Current PID tracking must remain correct.
+- Exit-code tracking must remain correct.
+- Retaining exited processes is intentional.
+- Scheduler work must build on the existing process subsystem.
+- Context switching should remain deterministic and observable through logging.
+
+---
+
+## Current Status Summary
+
+Implemented:
+
+    PID allocation
+    Current PID tracking
+    Process table
+    Process creation
+    User-mode execution
+    ELF loading
+    State transitions
+    Exit handling
+    Process chaining
+    Process-table dumping
+
+Future Work:
+
+    Scheduler
+    Context switching
+    Threading
+    SMP scheduling
+    Priorities
+    Wait queues
 
 ---
 
 ## License
-MIT or Apache 2.0 — to be determined.
+
+MIT or Apache 2.0 — TBD.

@@ -1,221 +1,433 @@
-# Bulldog Kernel – Syscall Dispatcher (Current Implementation)
+## Bulldog Kernel – Syscall Dispatcher (Current Implementation)
 
-This document describes Bulldog’s *current* syscall dispatcher architecture.  
-It reflects the real behavior of:
+Reviewed: November 2026
 
-- `syscall.rs` (entry point + dispatcher)
-- `syscall_table.rs` (syscall number → handler mapping)
-- `privilege-switching.md` (Ring 3 → Ring 0 transition)
-- `syscall-harness-guide.md` (testing and validation)
+This document describes Bulldog's current syscall dispatcher architecture.
 
-This is not a future design document — it describes exactly how Bulldog’s dispatcher works today.
+It reflects the implementation found in:
+
+    kernel/src/syscall/dispatcher.rs
+    kernel/src/syscall/table.rs
+    kernel/src/tests/syscall_harness.rs
+
+It complements:
+
+    syscall.md
+    syscall-table.md
+    syscall-entry.md
+    privilege-switching.md
+
+This document describes the current implementation rather than future designs.
 
 ---
 
 ## 1. Overview
 
-Bulldog’s syscall dispatcher is responsible for:
+The syscall dispatcher is responsible for:
 
-- Receiving control from user mode  
-- Validating the syscall number  
-- Dispatching to the correct handler  
-- Preserving registers according to the syscall ABI  
-- Returning values to user mode  
-- Ensuring a clean `iretq` return path  
+    Receiving control from user mode
+    Extracting syscall arguments
+    Looking up handlers
+    Invoking the correct syscall
+    Returning results to user mode
 
-The dispatcher is intentionally minimal and deterministic.
+The dispatcher is intentionally small and deterministic.
 
----
+Current syscall entry vector:
 
-## 2. Syscall Entry Path
+    0x80
 
-User mode enters the kernel through the syscall vector:
+Unknown syscalls return:
 
-```
-SYSCALL_VECTOR
-```
+    ENOSYS
 
-This vector is:
-
-- Installed by the syscall subsystem  
-- **Not** installed by `interrupts::init_idt()`  
-- Configured with DPL=3 so user mode can invoke it  
-- Routed onto the kernel stack via TSS  
-
-The entry stub:
-
-1. Saves user registers  
-2. Switches to the kernel stack (TSS)  
-3. Calls `syscall_entry()` in Rust  
-4. Restores registers  
-5. Returns via `iretq`
-
-The dispatcher runs inside `syscall_entry()`.
+rather than generating a fault.
 
 ---
 
-## 3. Syscall ABI (Current)
+## 2. Architecture
 
-Bulldog uses a simple, Linux‑style ABI:
+The dispatcher consists of three layers:
 
-| Register | Meaning |
-|----------|---------|
-| `rax` | syscall number |
-| `rdi` | arg0 |
-| `rsi` | arg1 |
-| `rdx` | arg2 |
-| `r10` | arg3 |
-| `r8`  | arg4 |
-| `r9`  | arg5 |
+    syscall_handler()
+            ↓
+    rust_dispatch()
+            ↓
+    dispatch()
 
-Return value is placed in:
+Responsibilities:
 
+    syscall_handler()
+        Low-level interrupt entry
+
+    rust_dispatch()
+        Rust-facing bridge and logging
+
+    dispatch()
+        Table lookup and handler invocation
+
+---
+
+## 3. Syscall Entry Path
+
+User-mode code invokes:
+
+    int 0x80
+
+The CPU then performs:
+
+    Ring 3
+            ↓
+    IDT gate validation
+            ↓
+    Ring 0 transition
+            ↓
+    syscall_handler()
+            ↓
+    rust_dispatch()
+            ↓
+    dispatch()
+            ↓
+    Syscall implementation
+
+This behavior is configured using:
+
+    SYSCALL_VECTOR = 0x80
+
+The syscall gate is installed with:
+
+    DPL = 3
+
+allowing Ring 3 code to invoke syscalls.
+
+---
+
+## 4. Low-Level Entry Stub
+
+Syscall entry begins in:
+
+```rust
+syscall_handler()
 ```
+
+implemented as a naked function.
+
+Responsibilities:
+
+    Preserve registers
+    Rearrange syscall arguments
+    Call rust_dispatch()
+    Return via iretq
+
+The handler preserves:
+
+```text
+rbx
+rbp
+r12
+r13
+```
+
+before transferring control to Rust code.
+
+The entry stub should remain:
+
+    Minimal
+    Deterministic
+    Easy to audit
+
+---
+
+## 5. Argument Mapping
+
+The current syscall ABI uses:
+
+<table>
+<tr>
+<th>Register</th>
+<th>Purpose</th>
+</tr>
+
+<tr>
+<td>rax</td>
+<td>Syscall number</td>
+</tr>
+
+<tr>
+<td>rdi</td>
+<td>arg0</td>
+</tr>
+
+<tr>
+<td>rsi</td>
+<td>arg1</td>
+</tr>
+
+<tr>
+<td>rdx</td>
+<td>arg2</td>
+</tr>
+
+</table>
+
+The dispatcher ultimately invokes handlers using:
+
+```rust
+fn(u64, u64, u64) -> u64
+```
+
+Arguments are forwarded as:
+
+```text
+arg0
+arg1
+arg2
+```
+
+---
+
+## 6. Rust Dispatch Layer
+
+The Rust entry bridge is:
+
+```rust
+rust_dispatch()
+```
+
+Responsibilities:
+
+    Optional syscall-test logging
+    Dispatch invocation
+    Return-value propagation
+
+When the syscall_tests feature is enabled, the dispatcher logs:
+
+```text
+Syscall number
+Arguments
+Return value
+```
+
+This output is used by the syscall harness.
+
+---
+
+## 7. Dispatcher Flow
+
+Dispatcher implementation:
+
+```rust
+pub fn dispatch(
+    num: u64,
+    arg0: u64,
+    arg1: u64,
+    arg2: u64,
+) -> u64
+```
+
+Dispatch process:
+
+    Syscall number
+            ↓
+    lookup(num)
+            ↓
+      Found?
+      /    \
+    Yes     No
+     |       |
+     ↓       ↓
+ Handler   ENOSYS
+     |
+     ↓
+ Return
+
+The dispatcher contains no syscall-specific logic.
+
+All syscall behavior resides in individual syscall handlers.
+
+---
+
+## 8. Table Lookup
+
+Handler lookup uses:
+
+```rust
+lookup(num)
+```
+
+provided by:
+
+```text
+kernel/src/syscall/table.rs
+```
+
+The syscall table is:
+
+    Static
+    Compile-time initialized
+    Read-only
+
+Current implemented syscalls:
+
+```text
+1  write
+2  exit
+3  open
+4  read
+5  alloc
+6  free
+7  close
+```
+
+All other table entries are currently unimplemented.
+
+---
+
+## 9. Error Handling
+
+Unknown syscall numbers return:
+
+```text
+ENOSYS
+```
+
+Example:
+
+```text
+999
+```
+
+Result:
+
+```text
+ENOSYS
+```
+
+The syscall harness validates this behavior.
+
+Other errors are produced by individual syscall handlers:
+
+```text
+EBADF
+EFAULT
+EINVAL
+EMFILE
+ENOMEM
+```
+
+The dispatcher itself only generates:
+
+```text
+ENOSYS
+```
+
+for unknown syscall numbers.
+
+---
+
+## 10. Return Path
+
+After syscall execution:
+
+    Handler returns
+            ↓
+    dispatch() returns
+            ↓
+    rust_dispatch() returns
+            ↓
+    syscall_handler()
+            ↓
+    iretq
+            ↓
+    Ring 3 resumes
+
+Return values are placed in:
+
+```text
 rax
 ```
 
-This ABI is enforced by the syscall harness.
+Execution resumes after the original:
+
+```text
+int 0x80
+```
+
+instruction.
 
 ---
 
-## 4. Dispatcher Flow
-
-The dispatcher is implemented in Rust:
-
-```rust
-pub fn syscall_dispatch(num: u64, args: SyscallArgs) -> SyscallResult {
-    match SYSCALL_TABLE.get(num) {
-        Some(handler) => handler(args),
-        None => SyscallResult::error(SysError::InvalidSyscall),
-    }
-}
-```
-
-### Steps:
-
-1. Extract syscall number from `rax`  
-2. Extract arguments from registers  
-3. Look up handler in `SYSCALL_TABLE`  
-4. If found → call handler  
-5. If not found → return `InvalidSyscall`  
-6. Place return value in `rax`  
-7. Return to user mode via `iretq`
-
-The dispatcher itself is intentionally tiny.
-
----
-
-## 5. Syscall Table
-
-The syscall table is defined in `syscall_table.rs`:
-
-```rust
-pub static SYSCALL_TABLE: SyscallTable = SyscallTable::new(&[
-    (0, sys_write),
-    (1, sys_read),
-    (2, sys_exit),
-    // ...
-]);
-```
-
-Properties:
-
-- Deterministic ordering  
-- No dynamic registration  
-- No runtime mutation  
-- Contributors add new syscalls here  
+## 11. Harness Coverage
 
 The syscall harness validates:
 
-- Table ordering  
-- Handler correctness  
-- Register preservation  
-- Return‑path correctness  
+### Dispatcher operation
+
+    Correct syscall lookup
+    Correct handler invocation
+    Correct return values
+
+### Error paths
+
+    Unknown syscall → ENOSYS
+
+### Syscall table coverage
+
+    write
+    exit
+    open
+    read
+    alloc
+    free
+    close
+
+### Privilege switching
+
+    Ring 3 entry
+    Ring 0 execution
+    iretq return
+
+The syscall harness serves as the primary behavioral validation source for the dispatcher.
 
 ---
 
-## 6. Error Handling
+## 12. Current Limitations
 
-Errors are returned using:
+Current implementation:
 
-```rust
-SysError
-```
+    Supports three syscall arguments
+    Uses a fixed-size static table
+    Performs no syscall filtering
+    Provides no tracing infrastructure
+    Supports only interrupt-based syscall entry
 
-Common errors:
-
-- `InvalidSyscall`  
-- `BadAddress`  
-- `PermissionDenied`  
-- `NotImplemented`  
-
-Errors are encoded into `SyscallResult` and returned in `rax`.
+These limitations are acceptable for the current development stage.
 
 ---
 
-## 7. Register Preservation
-
-The dispatcher must preserve:
-
-- All non‑return registers  
-- Flags  
-- Segment selectors  
-- User stack pointer  
-
-The syscall harness tests:
-
-- That registers not used for arguments remain unchanged  
-- That `rax` contains the correct return value  
-- That `iretq` restores user mode correctly  
-
-This is one of Bulldog’s strongest invariants.
-
----
-
-## 8. Return Path
-
-Returning to user mode uses:
-
-```
-iretq
-```
-
-The return frame contains:
-
-- User RIP  
-- User CS (DPL=3)  
-- RFLAGS  
-- User RSP  
-- User SS (DPL=3)  
-
-The dispatcher must not corrupt this frame.
-
----
-
-## 9. Future Enhancements
+## 13. Future Enhancements
 
 Planned improvements:
 
-- Per‑process syscall filtering  
-- Syscall tracing  
-- Syscall logging buffers  
-- Fast‑path syscalls (no dispatcher)  
-- Extended ABI for large arguments  
-- Memory‑safe user pointer validation  
-- VFS integration for `read`/`write`  
+    Additional syscall arguments
+    Syscall filtering
+    Syscall tracing
+    Syscall monitoring
+    User-pointer validation
+    Advanced dispatch policies
 
-These will be documented once implemented.
+These features are not currently implemented.
 
 ---
 
-## 10. Contributor Notes
+## Contributor Notes
 
-- Add new syscalls only in `syscall_table.rs`  
-- Keep dispatcher minimal and deterministic  
-- Do not mutate the syscall table at runtime  
-- Ensure all handlers follow the syscall ABI  
-- Document new syscalls in `syscall.md`  
-- Update the syscall harness when adding new syscalls  
+- Preserve dispatcher determinism.
+- Keep dispatch() free of syscall-specific logic.
+- Do not mutate the syscall table at runtime.
+- Preserve ENOSYS behavior for unknown syscall numbers.
+- Keep documentation synchronized with dispatcher.rs and table.rs.
+- Update syscall harness coverage whenever dispatcher behavior changes.
 
 ---
 

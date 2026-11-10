@@ -1,141 +1,247 @@
-# Bulldog Kernel – APIC / LAPIC Architecture
+## Bulldog Kernel – Local APIC (LAPIC)
 
-This document describes Bulldog’s APIC architecture, including the Local APIC (LAPIC),
-interrupt routing, timer configuration, and MMIO mapping. It complements:
+Reviewed: November 2026
 
-- `apic-timer.md`
-- `interrupts.md`
-- `memory/hhdm.md`
+This document describes Bulldog's current Local APIC (LAPIC) architecture.
+
+It complements:
+
+    apic.md
+    apic-implementation.md
+    apic-timer.md
+    interrupts.md
+    gdt.md
+
+This document describes the current implementation rather than future APIC plans.
 
 ---
 
 ## 1. Overview
 
-The Advanced Programmable Interrupt Controller (APIC) provides:
+Bulldog currently uses the Local APIC (LAPIC) as its primary interrupt controller.
 
-- Per‑CPU interrupt routing  
-- LAPIC timer  
-- Spurious interrupt handling  
-- Inter‑processor interrupts (IPI)  
-- Error reporting  
+Current responsibilities:
 
-Bulldog uses the LAPIC exclusively; the legacy PIC is disabled.
+    Interrupt delivery
+    Periodic timer interrupts
+    Spurious interrupt handling
+    End-of-interrupt signaling
+    APIC identification
+    APIC version reporting
+
+Current implementation targets:
+
+    Bootstrap Processor (BSP)
+
+IOAPIC and SMP support are not currently implemented.
 
 ---
 
 ## 2. LAPIC MMIO Mapping
 
-The LAPIC is memory‑mapped at:
+Current LAPIC physical address:
 
-```
-0xFEE00000
-```
+    0xFEE00000
 
-Bulldog maps this region into the higher‑half direct map (HHDM) during early initialization.
+Bulldog maps the LAPIC into kernel virtual memory using:
 
-Access is performed via volatile MMIO operations.
+    map_lapic_mmio()
+
+Current mapping:
+
+    Physical:
+        0xFEE00000
+
+    Virtual:
+        LAPIC_VIRT_BASE
+
+Current flags:
+
+    PRESENT
+    WRITABLE
+    NO_EXECUTE
+
+The LAPIC must be mapped before:
+
+    setup_apic()
+
+is executed.
 
 ---
 
 ## 3. LAPIC Registers
 
-Key registers:
+Bulldog currently uses:
 
-- `SVR` – Spurious interrupt vector  
-- `LVT_TIMER` – Timer configuration  
-- `TIMER_INIT_COUNT` – Initial timer count  
-- `TIMER_CURRENT_COUNT` – Current timer count  
-- `TIMER_DIVIDE` – Timer divisor  
-- `EOI` – End‑of‑interrupt register  
-- `ICR` – Inter‑processor interrupt control  
+    ID
+    VERSION
+    SVR
+    LVT_TIMER
+    DIVIDE_CONFIG
+    INITIAL_COUNT
+    CURRENT_COUNT
+    EOI
 
-Bulldog writes these registers directly via MMIO.
+These registers support all currently implemented LAPIC functionality.
 
 ---
 
-## 4. LAPIC Enable
+## 4. LAPIC Enablement
 
-LAPIC is enabled by setting:
+During initialization Bulldog:
 
-- Bit 8 of `SVR`  
-- Spurious vector (0xFF)  
+    Reads APIC MSR
+            ↓
+    Verifies LAPIC enabled
+            ↓
+    Enables SVR
+            ↓
+    Configures timer
+            ↓
+    Starts periodic interrupts
+
+Current SVR configuration:
+
+    Enable Bit = Set
+    Vector     = 0xFF
 
 This activates LAPIC interrupt delivery.
 
 ---
 
-## 5. LAPIC Timer
+## 5. LAPIC Identification
 
-The LAPIC timer is configured in:
+Current diagnostics record:
 
-- One‑shot mode (current)  
-- Periodic mode (future)  
-- TSC‑deadline mode (future)
+    LAPIC ID
+    LAPIC Version
+    CPUID APIC ID
 
-Bulldog uses vector:
+These values are logged during:
 
-```
-0x31
-```
+    setup_apic()
 
-The timer interrupt handler:
-
-- Increments kernel tick  
-- Sends EOI  
-- Uses IST for reliability  
+to assist debugging and future SMP development.
 
 ---
 
-## 6. End‑of‑Interrupt (EOI)
+## 6. LAPIC Timer
 
-EOI is written to:
+Current configuration:
 
-```
-0xB0
-```
+    Mode          = Periodic
+    Vector        = 0x31
+    Divisor       = 16
+    Initial Count = 500000
 
-Bulldog wraps this in:
+Current handler:
 
-```rust
-send_eoi();
-```
+    tick()
+            ↓
+    send_eoi()
 
-This acknowledges the interrupt and allows new interrupts to be delivered.
+The timer executes on:
 
----
+    IST1
 
-## 7. Spurious Interrupts
-
-Spurious interrupts use vector:
-
-```
-0xFF
-```
-
-Handler logs and acknowledges the interrupt.
+for improved reliability.
 
 ---
 
-## 8. Inter‑Processor Interrupts (IPI)
+## 7. End-of-Interrupt (EOI)
 
-Future Bulldog versions will use IPIs for:
+LAPIC interrupts are completed using:
 
-- Multi‑CPU startup  
-- TLB shootdown  
-- Cross‑CPU scheduling  
-- Kernel debugger  
+    send_eoi()
+
+Current implementation:
+
+    lapic_write(EOI, 0)
+
+EOI must be issued before returning from LAPIC interrupt handlers.
 
 ---
 
-## 9. Future Enhancements
+## 8. Spurious Interrupts
 
-- TSC‑deadline mode  
-- Per‑CPU LAPIC initialization  
-- Multi‑CPU interrupt routing  
-- LAPIC error handling  
-- High‑resolution timers  
+Current vector:
+
+    0xFF
+
+Current handler:
+
+    spurious_handler()
+
+Behavior:
+
+    Log interrupt
+            ↓
+    Send EOI
+
+This vector is also used by SVR configuration.
+
+---
+
+## 9. Interrupt Integration
+
+The LAPIC currently integrates with:
+
+    IDT
+    GDT
+    TSS
+    IST1 stack
+
+Current vector assignments:
+
+    LAPIC Timer -> 0x31
+    Spurious    -> 0xFF
+
+The LAPIC timer executes using:
+
+    LAPIC_IST_INDEX
+
+defined by the TSS.
+
+---
+
+## 10. Current Limitations
+
+Not currently implemented:
+
+    IOAPIC
+    Inter-processor interrupts
+    LAPIC error handling
+    SMP startup
+    Per-CPU APIC configuration
+
+These remain future work.
+
+---
+
+## 11. Future Enhancements
+
+Planned work:
+
+    IOAPIC initialization
+    SMP support
+    Inter-processor interrupts
+    Dynamic timer calibration
+    TSC-deadline mode
+    High-resolution timers
+    Per-CPU timer configuration
+
+---
+
+## Contributor Notes
+
+- Map LAPIC MMIO before setup_apic().
+- Preserve EOI handling.
+- Keep vector assignments synchronized with interrupts.rs.
+- Preserve setup_apic() diagnostics.
+- Document new LAPIC vectors when added.
 
 ---
 
 ## License
-MIT or Apache 2.0 — to be determined.
+
+MIT or Apache 2.0 — TBD.

@@ -1,250 +1,387 @@
-# Bulldog Kernel – Syscall Table (Current Implementation)
+## Bulldog Kernel – Syscall Table (Current Implementation)
 
-This document describes Bulldog’s *current* syscall table: the static mapping from syscall
-numbers to syscall handler functions.  
-It reflects the real behavior of:
+Reviewed: November 2026
 
-- `syscall_table.rs` (static table)
-- `dispatcher.rs` (lookup + dispatch)
-- `syscall.rs` (entry path)
-- `syscall-harness-guide.md` (validation)
-- `privilege-switching.md` (Ring 3 → Ring 0 transition)
+This document describes Bulldog's current syscall table: the static mapping from syscall numbers to syscall handler functions.
 
-This is not a future design document — it describes exactly how Bulldog’s syscall table works today.
+It reflects the implementation found in:
+
+    kernel/src/syscall/table.rs
+    kernel/src/syscall/dispatcher.rs
+    kernel/src/syscall/mod.rs
+    kernel/src/tests/syscall_harness.rs
+
+It complements:
+
+    syscall.md
+    dispatcher.md
+    syscall-entry.md
+    privilege-switching.md
+
+This is not a future design document. It describes the syscall table currently used by the running kernel and validated by the syscall harness.
 
 ---
 
 ## 1. Overview
 
-The syscall table is a **static, compile‑time defined mapping** from syscall numbers to
-handler functions.  
-It is intentionally simple and deterministic.
+The syscall table is a static, compile-time mapping from syscall numbers to handler functions.
 
 The table provides:
 
-- A fixed ABI  
-- Stable syscall numbering  
-- A single source of truth for all syscalls  
-- A contributor‑friendly workflow  
-- A predictable dispatch path validated by the syscall harness
+    Stable syscall numbering
+    Deterministic dispatch
+    Constant-time lookup
+    A single source of truth
+    Harness-validated behavior
 
-There is **no dynamic registration** and **no runtime mutation**.
+There is:
+
+    No dynamic registration
+    No runtime mutation
+    No runtime reordering
+
+The dispatcher consults this table whenever user-mode code invokes:
+
+    int 0x80
+
+through the syscall subsystem.
 
 ---
 
 ## 2. Syscall Number Allocation (Current)
 
-These are the syscall numbers currently implemented in Bulldog:
+Currently implemented syscalls:
 
-| Number | Name   | Handler Function           | Notes |
-|--------|--------|----------------------------|-------|
-| **1** | write  | `sys_write`                | FD write |
-| **2** | exit   | `sys_exit_trampoline`      | Process exit (stub) |
-| **3** | open   | `sys_open`                 | Returns FD |
-| **4** | read   | `sys_read`                 | FD read |
-| **5** | alloc  | `sys_alloc_trampoline`     | Allocates memory |
-| **6** | free   | `sys_free_trampoline`      | Frees memory |
-| **7** | close  | `sys_close_trampoline`     | Closes FD |
+<table>
+<tr>
+<th>Number</th>
+<th>Name</th>
+<th>Handler Function</th>
+<th>Notes</th>
+</tr>
 
-### Numbering invariants
+<tr>
+<td>1</td>
+<td>write</td>
+<td>sys_write</td>
+<td>FD write</td>
+</tr>
 
-- Numbers must be **unique**  
-- Numbers must be **stable** across kernel versions  
-- Numbers must be **documented** in `syscall.md`  
-- Numbers must be **added only at the end** of the table  
-- Numbers must **never be reused**  
+<tr>
+<td>2</td>
+<td>exit</td>
+<td>sys_exit_trampoline</td>
+<td>Process exit and cleanup</td>
+</tr>
 
-These rules ensure ABI stability.
+<tr>
+<td>3</td>
+<td>open</td>
+<td>sys_open</td>
+<td>Returns file descriptor</td>
+</tr>
+
+<tr>
+<td>4</td>
+<td>read</td>
+<td>sys_read</td>
+<td>FD read</td>
+</tr>
+
+<tr>
+<td>5</td>
+<td>alloc</td>
+<td>sys_alloc_trampoline</td>
+<td>Allocates memory</td>
+</tr>
+
+<tr>
+<td>6</td>
+<td>free</td>
+<td>sys_free_trampoline</td>
+<td>Frees memory</td>
+</tr>
+
+<tr>
+<td>7</td>
+<td>close</td>
+<td>sys_close_trampoline</td>
+<td>Closes file descriptor</td>
+</tr>
+
+</table>
+
+### Numbering Invariants
+
+- Syscall numbers must be unique.
+- Syscall numbers must remain stable.
+- New syscall numbers must be added at the end of the allocation range.
+- Existing syscall numbers must never be reused.
+- ABI compatibility takes priority over numbering convenience.
+
+These rules preserve syscall ABI stability.
 
 ---
 
 ## 3. Syscall Table Structure
 
-The table is defined in Rust as:
+The syscall subsystem exposes:
 
 ```rust
-pub static SYSCALL_TABLE: SyscallTable = SyscallTable::new(&[
-    (1, sys_write),
-    (2, sys_exit_trampoline),
-    (3, sys_open),
-    (4, sys_read),
-    (5, sys_alloc_trampoline),
-    (6, sys_free_trampoline),
-    (7, sys_close_trampoline),
-]);
+pub static SYSCALL_TABLE:
+    [Option<SyscallFn>; SYSCALL_TABLE_SIZE];
 ```
 
-Each entry contains:
+Current table size:
 
-- A syscall number (`u64`)
-- A handler function pointer (`SyscallFn`)
+```text
+512 entries
+```
 
-The table is stored in a static region and never modified.
+Implemented syscall slots contain function pointers.
+
+Unimplemented syscall slots contain:
+
+```rust
+None
+```
+
+The table is initialized at compile time and never modified at runtime.
 
 ---
 
 ## 4. Handler Function Signature
 
-All syscall handlers use the same signature:
+The syscall table stores handlers using:
 
 ```rust
-pub type SyscallFn = fn(args: SyscallArgs) -> u64;
+pub type SyscallFn =
+    fn(u64, u64, u64) -> u64;
 ```
 
-Where:
+Arguments correspond to:
 
-```rust
-pub struct SyscallArgs {
-    pub arg0: u64,
-    pub arg1: u64,
-    pub arg2: u64,
-}
+```text
+arg0
+arg1
+arg2
 ```
 
-This matches the dispatcher’s ABI:
+which originate from:
 
-| Register | Meaning |
-|----------|---------|
-| `rax` | syscall number |
-| `rdi` | arg0 |
-| `rsi` | arg1 |
-| `rdx` | arg2 |
+```text
+rdi
+rsi
+rdx
+```
 
-Return value is placed in `rax`.
+during syscall dispatch.
+
+Some handlers use trampoline functions to adapt specialized implementations to the common ABI.
+
+Current trampoline handlers:
+
+```text
+sys_exit_trampoline
+sys_alloc_trampoline
+sys_free_trampoline
+sys_close_trampoline
+```
 
 ---
 
 ## 5. Dispatcher Integration
 
-The dispatcher performs:
+The dispatcher performs handler lookup through:
 
 ```rust
-match SYSCALL_TABLE.get(num) {
-    Some(handler) => handler(args),
-    None => SysError::InvalidSyscall.into(),
+lookup(num)
+```
+
+Current logic:
+
+```rust
+match lookup(num) {
+    Some(fun) => fun(arg0, arg1, arg2),
+    None => err(errno::ENOSYS),
 }
 ```
 
-This ensures:
+Properties:
 
-- Deterministic lookup  
-- No dynamic mutation  
-- No runtime registration  
-- No fallback paths  
-- No handler ambiguity  
+    Deterministic lookup
+    No dynamic registration
+    No runtime mutation
+    No handler ambiguity
 
-The dispatcher is intentionally minimal.
+Unknown syscall numbers return:
+
+    ENOSYS
+
+rather than generating an exception.
 
 ---
 
 ## 6. Syscall Harness Integration
 
-The syscall harness validates:
+The syscall harness validates syscall-table behavior alongside syscall functionality.
 
-### Table correctness
-- No missing entries  
-- No duplicate numbers  
-- No gaps  
-- No incorrect ordering  
+### Table Correctness
 
-### Handler correctness
-- Correct return value  
-- Correct argument passing  
-- Correct register preservation  
-- Correct privilege return  
+The harness verifies:
 
-### Error paths
-- Invalid syscall → `InvalidSyscall`  
-- Unimplemented syscall → `NotImplemented`  
+- Implemented syscalls resolve correctly
+- Unimplemented syscalls return ENOSYS
+- Number allocation remains stable
+- Handlers remain reachable
 
-If the table is incorrect, the harness prints:
+### Handler Correctness
 
-```
-TABLE ERROR: syscall 7 missing handler
-```
+The harness verifies:
+
+- Argument passing
+- Return-value behavior
+- Error propagation
+- FD behavior
+- Allocator behavior
+- Process-exit behavior
+
+### Dispatch Correctness
+
+The harness also validates:
+
+- Entry through vector 0x80
+- Dispatcher execution
+- Handler invocation
+- Correct return values
+
+The syscall harness serves as the primary behavioral validation source for the syscall subsystem.
 
 ---
 
 ## 7. Adding a New Syscall
 
-To add a new syscall:
+### Step 1
 
-### Step 1 — Add the handler
-In `syscall/<name>.rs`:
+Implement the syscall:
 
-```rust
-pub fn sys_foo(args: SyscallArgs) -> u64 {
-    // implementation
-}
+```text
+kernel/src/syscall/<name>.rs
 ```
 
-### Step 2 — Add the number
-In `syscall/stubs.rs`:
+### Step 2
+
+Allocate a syscall number:
+
+```text
+kernel/src/syscall/stubs.rs
+```
+
+Example:
 
 ```rust
 pub const SYS_FOO: u64 = 8;
 ```
 
-### Step 3 — Add the table entry
-In `syscall_table.rs`:
+### Step 3
 
-```rust
-(SYS_FOO, sys_foo),
+Register the syscall:
+
+```text
+kernel/src/syscall/table.rs
 ```
 
-### Step 4 — Document it
-In `syscall.md`.
+Example:
 
-### Step 5 — Add harness tests
-In the user‑mode test program.
+```rust
+t[SYS_FOO as usize] = Some(sys_foo);
+```
 
-### Step 6 — Validate
-Run the syscall harness.
+### Step 4
+
+Update documentation:
+
+```text
+syscall.md
+syscall-table.md
+docs/interface/syscalls/<name>.md
+```
+
+### Step 5
+
+Add syscall-harness coverage.
+
+### Step 6
+
+Validate with the syscall harness.
 
 ---
 
 ## 8. Error Handling
 
-If a syscall number is not found:
+Unknown syscall numbers return:
 
-```rust
-SysError::InvalidSyscall
+```text
+ENOSYS
 ```
 
-If a syscall is known but not implemented:
+Current syscall implementations may also return:
 
-```rust
-SysError::NotImplemented
+```text
+EBADF
+EFAULT
+EINVAL
+EMFILE
+ENOMEM
 ```
 
-Errors are encoded into `u64` and returned in `rax`.
+Errors are encoded as negative errno values and returned through:
+
+```text
+rax
+```
+
+The syscall harness validates both success and failure paths.
 
 ---
 
-## 9. Future Enhancements
+## 9. Current Limitations
+
+Current implementation:
+
+    Supports three syscall arguments
+    Uses a fixed-size syscall table
+    Uses static handler registration
+    Does not support dynamic loading
+    Does not support syscall filtering
+
+These limitations are acceptable for the current development stage.
+
+---
+
+## 10. Future Enhancements
 
 Planned improvements:
 
-- Extended ABI for large arguments  
-- Per‑process syscall filtering  
-- Syscall tracing  
-- Syscall logging buffers  
-- Fast‑path syscalls (no dispatcher)  
-- VFS integration for `read`/`write`  
-- Memory‑safe user pointer validation  
+    Additional syscall arguments
+    User-pointer validation
+    Syscall tracing
+    Syscall filtering
+    Expanded file operations
+    Extended process-management syscalls
 
-These will be documented once implemented.
+These capabilities are not currently implemented.
 
 ---
 
-## 10. Contributor Notes
+## Contributor Notes
 
-- Add new syscalls only at the end of the table  
-- Never reuse syscall numbers  
-- Never mutate the table at runtime  
-- Keep handler signatures consistent  
-- Update `syscall.md` when adding new syscalls  
-- Update the syscall harness when adding new syscalls  
+- Never reuse syscall numbers.
+- Add new syscall numbers only at the end of the allocation range.
+- Do not mutate the syscall table at runtime.
+- Keep syscall documentation synchronized with table.rs.
+- Update the syscall harness whenever syscall behavior changes.
+- Treat the syscall harness as the authoritative source of behavioral validation.
 
 ---
 

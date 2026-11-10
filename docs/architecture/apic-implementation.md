@@ -1,13 +1,14 @@
-# Bulldog Kernel – APIC Implementation Details
+## Bulldog Kernel – APIC Implementation Details
 
-This document describes the implementation details of Bulldog’s APIC subsystem, including
-LAPIC MMIO access, register programming, spurious interrupt configuration, and timer setup.
+Reviewed: November 2026
+
+This document describes the implementation details of Bulldog's APIC subsystem, including LAPIC MMIO access, register programming, spurious interrupt configuration, and timer setup.
 
 It complements:
 
-- `lapic.md` (architecture)
-- `apic-timer.md`
-- `interrupts-implementation.md`
+    apic.md
+    apic-timer.md
+    interrupts-implementation.md
 
 ---
 
@@ -15,30 +16,44 @@ It complements:
 
 Bulldog uses the Local APIC (LAPIC) for:
 
-- Interrupt routing
-- Timer interrupts
-- Spurious interrupt handling
-- End‑of‑interrupt signaling
+    Interrupt routing
+    Timer interrupts
+    Spurious interrupt handling
+    End-of-interrupt signaling
 
-The legacy PIC is disabled early in boot.
+The legacy PIC is disabled early during kernel initialization.
+
+Current implementation targets:
+
+    Bootstrap Processor (BSP)
+
+IOAPIC and SMP functionality remain future work.
 
 ---
 
 ## 2. LAPIC MMIO Mapping
 
-The LAPIC is memory‑mapped at:
+The LAPIC physical base address is:
 
-```
-0xFEE00000
-```
+    0xFEE00000
 
-Bulldog maps this region into the higher‑half direct map (HHDM) using:
+Bulldog maps this region into higher-half virtual memory using:
 
-- `PRESENT`
-- `WRITABLE`
-- `NO_EXECUTE`
+    PRESENT
+    WRITABLE
+    NO_EXECUTE
 
-Access is performed using volatile reads/writes.
+Current mapping is performed by:
+
+    map_lapic_mmio()
+
+before:
+
+    setup_apic()
+
+is executed.
+
+All LAPIC access occurs through volatile MMIO operations.
 
 ---
 
@@ -46,88 +61,206 @@ Access is performed using volatile reads/writes.
 
 Bulldog currently uses:
 
-- `SVR` – Spurious interrupt vector + LAPIC enable
-- `LVT_TIMER` – Timer mode + vector
-- `TIMER_INIT_COUNT` – Initial timer count
-- `TIMER_CURRENT_COUNT` – Current timer count
-- `TIMER_DIVIDE` – Timer divisor
-- `EOI` – End‑of‑interrupt register
+    SVR
+    ID
+    VERSION
+    LVT_TIMER
+    DIVIDE_CONFIG
+    INITIAL_COUNT
+    CURRENT_COUNT
+    EOI
 
-Future work will use:
+Current responsibilities:
 
-- `ICR` – Inter‑processor interrupts
-- `LVT_ERROR` – LAPIC error reporting
+    LAPIC enablement
+    Identity reporting
+    Timer configuration
+    End-of-interrupt signaling
+
+Future work may additionally use:
+
+    ICR
+    LVT_ERROR
+
+for SMP and advanced interrupt functionality.
 
 ---
 
 ## 4. LAPIC Enable
 
-Bulldog enables LAPIC by writing:
+Bulldog enables the LAPIC through:
 
-- Spurious vector (`0xFF`)
-- LAPIC enable bit (bit 8)
+    SVR
 
-This activates LAPIC interrupt delivery.
+Current configuration:
 
----
+    Vector: 0xFF
+    Enable Bit: Set
 
-## 5. LAPIC Timer Setup
+Equivalent behavior:
 
-Bulldog configures the timer in one‑shot mode:
+    0x100 | 0xFF
 
-1. Set divisor
-2. Set initial count
-3. Set vector (`0x31`)
-4. Enable timer interrupt
-
-The timer handler:
-
-- Calls `tick()`
-- Sends EOI
-- Runs on IST1
+This activates Local APIC interrupt delivery.
 
 ---
 
-## 6. End‑of‑Interrupt (EOI)
+## 5. LAPIC Timer Configuration
 
-EOI is written to:
+Bulldog currently configures the LAPIC timer in:
 
-```
-0xB0
-```
+    Periodic Mode
 
-Bulldog wraps this in:
+Current settings:
 
-```rust
-send_eoi();
-```
+    Vector        = 0x31
+    Divisor       = 16
+    Initial Count = 500000
 
-This acknowledges the interrupt and allows new interrupts to be delivered.
+Configuration sequence:
+
+    Configure divisor
+            ↓
+    Configure vector
+            ↓
+    Select periodic mode
+            ↓
+    Load initial count
+            ↓
+    Start timer
+
+The timer vector is defined by:
+
+    LAPIC_TIMER_VECTOR
+
+in the interrupt subsystem.
 
 ---
 
-## 7. Spurious Interrupts
+## 6. LAPIC Timer Handler
 
-Spurious interrupts use vector:
+Current timer handler:
 
-```
-0xFF
-```
+    lapic_timer_handler()
 
-Handler logs and acknowledges the interrupt.
+Behavior:
+
+    tick()
+            ↓
+    send_eoi()
+
+Characteristics:
+
+    Runs on IST1
+    No verbose logging
+    Generates kernel timer ticks
+
+The scheduler does not currently consume these timer events.
 
 ---
 
-## 8. Future Enhancements
+## 7. End-of-Interrupt (EOI)
 
-- TSC‑deadline mode
-- Per‑CPU LAPIC initialization
-- Multi‑CPU interrupt routing
-- LAPIC error handling
-- High‑resolution timers
-- IPIs for SMP
+EOI is written through:
+
+    send_eoi()
+
+which performs:
+
+    lapic_write(EOI, 0)
+
+Every LAPIC-delivered interrupt must acknowledge completion using EOI.
+
+Failure to do so prevents subsequent interrupt delivery.
+
+---
+
+## 8. Spurious Interrupts
+
+Current vector:
+
+    0xFF
+
+Handler:
+
+    spurious_handler()
+
+Behavior:
+
+    Log interrupt
+            ↓
+    Send EOI
+
+This vector is also used during APIC enablement.
+
+---
+
+## 9. APIC Identity Verification
+
+Current initialization verifies:
+
+    LAPIC ID
+    LAPIC Version
+    CPUID APIC ID
+
+The following values are logged:
+
+    LAPIC MMIO ID
+    CPUID-reported APIC ID
+    LAPIC Version Register
+
+This information assists debugging and future SMP development.
+
+---
+
+## 10. Interaction With Interrupts
+
+The interrupt subsystem provides:
+
+    LAPIC_TIMER_VECTOR
+    IDT entries
+    IST stack routing
+
+Current vector assignments:
+
+    LAPIC Timer -> 0x31
+    Spurious    -> 0xFF
+
+The LAPIC timer executes on:
+
+    IST1
+
+for increased reliability.
+
+---
+
+## 11. Future Enhancements
+
+Planned improvements:
+
+    IOAPIC initialization
+    Hardware IRQ routing
+    SMP support
+    Inter-processor interrupts
+    LAPIC error handling
+    Dynamic timer calibration
+    Scheduler integration
+    High-resolution timers
+
+These features are not currently implemented.
+
+---
+
+## Contributor Notes
+
+- Ensure map_lapic_mmio() executes before setup_apic().
+- Preserve EOI handling in LAPIC interrupt paths.
+- Keep LAPIC diagnostic logging intact.
+- Maintain synchronization with interrupts.md and apic.md.
+- Document new vectors whenever LAPIC functionality expands.
 
 ---
 
 ## License
+
 MIT or Apache 2.0 — TBD.

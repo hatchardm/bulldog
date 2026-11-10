@@ -1,104 +1,272 @@
-# Bulldog Kernel – Memory Subsystem Index
+## Bulldog Kernel – Memory Subsystem Index
 
-The memory subsystem defines how Bulldog manages physical memory, virtual memory, paging
-structures, higher‑half mapping, and the direct physical map (HHDM). It is one of the core
-hardware‑facing components of the architecture layer.
+Reviewed: November 2026
 
-This directory contains documentation for all memory‑related architecture components.
+The memory subsystem defines how Bulldog manages:
+
+    Physical memory
+    Virtual memory
+    Paging structures
+    Higher-Half Direct Mapping (HHDM)
+    Frame allocation
+    User-memory mappings
+    ELF loading support
+
+It is one of the core architecture subsystems and forms the foundation for:
+
+    Paging
+    Heap allocation
+    ELF loading
+    User-mode execution
+    Process management
+    Future scheduling
+
+This directory contains the current memory architecture documentation.
 
 ---
 
 ## Contents
 
-### **1. Memory Overview**
-`memory.md`  
-High‑level description of Bulldog’s memory architecture, including:
+### 1. Memory Overview
 
-- Higher‑half kernel design  
-- Virtual address layout  
-- Physical memory model  
-- Paging fundamentals  
-- Kernel heap integration  
-- Guard pages (future)  
+    memory.md
 
----
+High-level description of Bulldog's current memory-management implementation.
 
-### **2. Memory Map**
-`memory-map.md`  
-Detailed description of:
+Topics include:
 
-- Physical memory map from the bootloader  
-- Region classification (usable, reserved, ACPI, MMIO)  
-- Virtual memory layout  
-- Higher‑half kernel region  
-- Direct physical map (HHDM)  
-- Canonical address boundaries  
-
-This document complements the bootloader handoff documentation in:
-
-```
-../../boot/bootloader.md
-```
+    Higher-half architecture
+    HHDM
+    Paging infrastructure
+    Frame allocation
+    ELF loading
+    User memory
+    User-page tracking
+    Process cleanup
 
 ---
 
-### **3. Frame Allocator (Planned)**
-`frame-allocator.md` (future)  
-Will describe:
+### 2. Memory Map
 
-- Physical frame allocation  
-- Integration with HHDM  
-- Free‑list or bitmap allocator design  
-- Interaction with paging and kernel heap  
-- Safety invariants  
+    memory-map.md
 
-This document will be added once the frame allocator is finalized.
+Describes the current physical and virtual memory layout.
 
----
+Topics include:
 
-### **4. HHDM (Higher‑Half Direct Map)**
-`hhdm.md` (future)  
-Will describe:
-
-- Virtual → physical mapping formula  
-- Why Bulldog uses a direct map  
-- How the kernel accesses physical memory  
-- MMIO mapping strategy  
-- Integration with APIC, ACPI, and paging  
-
-This document will be added when HHDM documentation is expanded.
+    Physical memory regions
+    BootInfo handoff
+    Virtual address layout
+    HHDM layout
+    Kernel mappings
+    User mappings
+    Framebuffer mappings
+    LAPIC mappings
 
 ---
 
-## Purpose of the Memory Subsystem
+### 3. Frame Allocator
 
-The memory subsystem provides:
+    frame-allocator.md
 
-- Deterministic physical memory management  
-- Safe virtual memory abstraction  
-- Kernel‑only higher‑half execution  
-- Direct physical access for allocators and drivers  
-- Foundation for paging, heap, VFS, ELF loader, and processes  
+Describes Bulldog's current frame-allocation implementation.
 
-It is tightly integrated with:
+Topics include:
 
-- `boot/bootloader.md`  
-- `architecture/layout.md`  
-- `architecture/kernel_init.md`  
-- `allocator/` subsystem  
-- Future process and VFS subsystems  
+    BootInfo integration
+    BulldogFrameAllocator
+    Sequential allocation
+    Frame recycling
+    Free-list management
+    User-memory cleanup integration
+    ELF-loader integration
+
+---
+
+### 4. Higher-Half Direct Map (HHDM)
+
+    hhdm.md
+
+Describes Bulldog's direct physical-memory mapping architecture.
+
+Topics include:
+
+    HHDM offset
+    Physical-to-virtual conversion
+    Bootloader integration
+    BootInfo integration
+    OffsetPageTable usage
+    ELF loading support
+    User-memory support
+
+---
+
+### 5. Paging Architecture
+
+    paging.md
+
+Describes Bulldog's runtime paging implementation.
+
+Topics include:
+
+    OffsetPageTable
+    Paging initialization
+    BulldogFrameAllocator
+    Page mappings
+    User-page allocation
+    User-stack allocation
+    Process cleanup
+    Page permissions
+
+---
+
+### 6. Page Table Structures
+
+    page-table.md
+
+Describes the x86_64 paging hierarchy used by Bulldog.
+
+Topics include:
+
+    PML4
+    PDPT
+    PD
+    PT
+    Page-table flags
+    USER_ACCESSIBLE mappings
+    NO_EXECUTE support
+    Ring 3 memory access
+
+---
+
+## Current Architecture
+
+Current memory-management flow:
+
+    Bootloader
+            ↓
+    Memory Map Discovery
+            ↓
+    BootInfo Handoff
+            ↓
+    HHDM Initialization
+            ↓
+    Paging Initialization
+            ↓
+    Frame Allocator Creation
+            ↓
+    Heap Initialization
+            ↓
+    ELF Loading
+            ↓
+    User Memory
+            ↓
+    Process Execution
+            ↓
+    Process Cleanup
+
+This reflects the current Bulldog implementation.
+
+---
+
+## Responsibilities
+
+The memory subsystem currently provides:
+
+    Higher-half execution
+    HHDM access
+    Frame allocation
+    Paging management
+    User-page allocation
+    User-stack allocation
+    ELF segment mapping
+    Page cleanup
+    Frame recycling
+
+These capabilities support all current user-mode and process-management features.
+
+---
+
+## Related Documentation
+
+### Boot Layer
+
+    ../../boot/bootloader.md
+    ../../boot/boot.md
+
+Provides:
+
+    BootInfo
+    Memory-map handoff
+    HHDM creation
+    Paging bootstrap
+
+---
+
+### Architecture Layer
+
+    ../kernel_init.md
+    ../kernel-bin.md
+    ../cpu-init.md
+
+Provides:
+
+    Kernel startup
+    Paging initialization
+    APIC mappings
+    Runtime initialization
+
+---
+
+### Process Layer
+
+    ../processes.md
+
+Documents:
+
+    User-mode execution
+    Process lifecycle
+    Process cleanup
+    Scheduler planning
+
+---
+
+## Current Status
+
+Implemented:
+
+    Higher-half kernel
+    HHDM
+    Paging
+    Frame allocation
+    Frame recycling
+    User-memory mappings
+    User stacks
+    ELF loading
+    User-page tracking
+    Process cleanup
+
+Future Work:
+
+    Per-process page tables
+    Copy-on-write
+    Demand paging
+    Shared memory
+    Memory-mapped files
+    NUMA support
 
 ---
 
 ## Contributor Notes
 
-- Keep memory documentation technically precise  
-- Update this index when adding new memory documents  
-- Maintain canonical address boundaries  
-- Document all new mappings and invariants  
-- Avoid mixing user‑mode memory with kernel memory documentation  
+- Keep memory documentation synchronized with BootInfo changes.
+- Review memory documentation whenever paging changes.
+- Synchronize HHDM documentation with bootloader paging.
+- Update this index whenever new memory documents are added.
+- Maintain consistency between memory, paging, and process documentation.
 
 ---
 
 ## License
-MIT or Apache 2.0 — to be determined.
+
+MIT or Apache 2.0 — TBD.

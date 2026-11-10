@@ -1,186 +1,384 @@
-# Bulldog Kernel – Global Descriptor Table (GDT) and TSS (Current Implementation)
+## Bulldog Kernel – Global Descriptor Table (GDT) and Task State Segment (TSS)
 
-This document describes Bulldog’s **current** implementation of the Global Descriptor Table (GDT), Task State Segment (TSS), and Interrupt Stack Table (IST). It reflects the real behavior of:
+Reviewed: November 2026
 
-- `gdt.rs` (GDT, TSS, IST setup)
-- `stack.rs` (static IST stack allocations)
-- `kernel_init` (GDT/TSS initialization)
+This document describes Bulldog's current implementation of the Global Descriptor Table (GDT), Task State Segment (TSS), privilege stacks, and Interrupt Stack Table (IST).
 
-This is a description of the *current implementation*, not future user‑mode or privilege‑switching plans.
+It reflects the implementation found in:
+
+    kernel/src/gdt.rs
+    kernel/src/stack.rs
+    kernel_init()
+
+This document describes the current implementation rather than future plans.
 
 ---
 
 ## 1. Overview
 
-Bulldog uses a minimal GDT configuration suitable for a 64‑bit kernel:
+Bulldog uses a GDT configuration suitable for a modern x86_64 kernel with Ring 3 support.
 
-- Kernel code segment  
-- Kernel data segment  
-- TSS descriptor (required for IST support)
+Current descriptors include:
 
-The TSS defines two dedicated IST stacks:
+    Kernel Code Segment
+    Kernel Data Segment
+    User Code Segment
+    User Data Segment
+    TSS Descriptor
 
-- **IST0 → Double‑fault handler**  
-- **IST1 → LAPIC timer + page‑fault handlers**
+The TSS provides:
 
-These stacks are statically allocated in higher‑half kernel space.
+    Ring 3 → Ring 0 transitions
+    Privilege stacks
+    Dedicated IST stacks
 
-User‑mode segments (Ring 3) are **not implemented yet**.
+Current IST assignments:
 
----
+    IST0 → Double Fault
+    IST1 → LAPIC Timer and Page Fault
 
-## 2. GDT Structure (Current)
+The corresponding stacks are statically allocated in higher-half kernel memory.
 
-The GDT is created in `gdt.rs` using `lazy_static!`:
-
-- Kernel code segment (`Descriptor::kernel_code_segment()`)
-- Kernel data segment (`Descriptor::kernel_data_segment()`)
-- TSS segment (`Descriptor::tss_segment(&TSS)`)
-
-The GDT is loaded once during early kernel initialization.
-
-### Segment Selectors
-
-`gdt.rs` stores the selectors in a struct:
-
-```rust
-struct Selectors {
-    code_selector: SegmentSelector,
-    data_selector: SegmentSelector,
-    tss_selector: SegmentSelector,
-}
-```
-
-These selectors are used to load:
-
-- `CS` (kernel code)
-- `DS`, `ES`, `SS` (kernel data)
-- TSS (via `load_tss()`)
+User-mode support is currently implemented and uses dedicated Ring 3 descriptors.
 
 ---
 
-## 3. Task State Segment (TSS)
+## 2. GDT Structure
 
-The TSS is defined using `lazy_static!` and contains two IST entries.
+The GDT is created in:
 
-### IST Layout (Current)
+    kernel/src/gdt.rs
 
-| IST Index | Purpose | Backing Stack |
-|-----------|---------|---------------|
-| **0** | Double fault | `STACK` |
-| **1** | LAPIC timer + page fault | `LAPIC_STACK` |
+using:
 
-### Stack Properties
+    GlobalDescriptorTable
 
-Each IST stack:
+Current entries:
 
-- Is **128 KiB**
-- Is **16‑byte aligned**
-- Is **statically allocated** in higher‑half space
-- Uses the **end** of the region as the initial RSP (x86‑64 stack grows downward)
+    Descriptor::kernel_code_segment()
+    Descriptor::kernel_data_segment()
+    Descriptor::user_code_segment()
+    Descriptor::user_data_segment()
+    Descriptor::tss_segment()
 
-Example from `gdt.rs`:
-
-```rust
-let df_stack_start = VirtAddr::from_ptr(unsafe { core::ptr::addr_of!(STACK.0) });
-let df_stack_end = df_stack_start + STACK_SIZE;
-tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX] = df_stack_end;
-```
-
-Guard pages are **not implemented yet**, but planned.
+The GDT is initialized once during kernel startup.
 
 ---
 
-## 4. IST Usage in the Kernel
+## 3. Segment Selectors
 
-### IST0 – Double Fault
+Bulldog stores segment selectors in:
 
-Used exclusively for double‑fault exceptions, which typically indicate:
+    Selectors
 
-- Stack corruption  
-- Page‑fault recursion  
-- Interrupt handling failure  
+Current selectors:
 
-A dedicated IST ensures the CPU has a clean stack to recover or panic safely.
+    code_selector
+    data_selector
+    tss_selector
+    user_code_selector
+    user_data_selector
 
-### IST1 – LAPIC Timer + Page Fault
+These selectors are later used to configure:
 
-Bulldog routes:
-
-- LAPIC timer interrupts  
-- Page faults  
-
-…onto IST1.
-
-This prevents:
-
-- Timer interrupts from running on a corrupted kernel stack  
-- Page faults from reusing the same stack that triggered the fault  
-
-This design significantly improves robustness.
+    CS
+    DS
+    ES
+    SS
+    TSS
+    Ring 3 entry
 
 ---
 
-## 5. GDT Initialization Flow
+## 4. Task State Segment (TSS)
 
-`init()` in `gdt.rs` performs:
+The Task State Segment is created during:
 
-1. Load GDT  
-2. Load segment registers:  
-   - `CS` → kernel code  
-   - `DS`, `ES`, `SS` → kernel data  
-3. Load TSS via `load_tss()`  
+    gdt::init()
 
-This must occur **before enabling interrupts** or LAPIC timers.
+Responsibilities:
 
----
+    IST configuration
+    Privilege-stack configuration
+    Ring transition support
 
-## 6. Interaction With Other Subsystems
+The TSS is leaked into permanently allocated memory and remains valid for the lifetime of the kernel.
 
-### Memory Management
+After creation it is loaded using:
 
-- IST stacks live in higher‑half kernel space  
-- No guard pages yet  
-- LAPIC MMIO mapping must be active before LAPIC interrupts use IST1
-
-### APIC
-
-- LAPIC timer interrupts use IST1  
-- Page faults also use IST1  
-- Double faults use IST0
-
-### Syscalls (Future)
-
-User‑mode memory and privilege switching will require:
-
-- Ring‑3 code/data segments  
-- A syscall entry stack (likely IST2)  
-- A revised TSS layout
-
-These are **not implemented yet**.
+    load_tss()
 
 ---
 
-## 7. Future Work
+## 5. Privilege Stack (RSP0)
+
+Bulldog configures:
+
+    privilege_stack_table[0]
+
+inside the TSS.
+
+Purpose:
+
+    Ring 3 → Ring 0 transitions
+
+Backing stack:
+
+    KERNEL_STACK
+
+Current size:
+
+    128 KiB
+
+The CPU switches to this stack when:
+
+    System calls
+    User-mode exceptions
+    User-mode interrupts
+
+cause entry into kernel mode.
+
+This stack is separate from the IST mechanism.
+
+---
+
+## 6. Interrupt Stack Table Layout
+
+Current IST assignments:
+
+    IST0 → Double Fault
+    IST1 → LAPIC Timer + Page Fault
+
+Constants:
+
+    DOUBLE_FAULT_IST_INDEX = 0
+    LAPIC_IST_INDEX        = 1
+
+These assignments are established during TSS creation.
+
+---
+
+## 7. IST Stack Properties
+
+Current stack characteristics:
+
+    128 KiB per stack
+    16-byte aligned
+    Statically allocated
+    Higher-half virtual addresses
+
+Stack pointers are initialized using:
+
+    stack_base + STACK_SIZE
+
+because x86_64 stacks grow downward.
+
+Current stacks:
+
+    STACK
+    LAPIC_STACK
+    KERNEL_STACK
+
+Guard pages are not currently implemented.
+
+---
+
+## 8. IST0 – Double Fault Handler
+
+Purpose:
+
+    Double-fault recovery
+
+Typical fault causes:
+
+    Stack corruption
+    Fault recursion
+    Invalid exception-handling state
+
+Using a dedicated stack allows the CPU to continue operating even if the current stack is unusable.
+
+Current backing stack:
+
+    STACK
+
+---
+
+## 9. IST1 – LAPIC Timer and Page Faults
+
+Purpose:
+
+    LAPIC timer interrupts
+    Page faults
+
+Current backing stack:
+
+    LAPIC_STACK
+
+Benefits:
+
+    Improved fault isolation
+    Reliable timer handling
+    Reduced dependency on the interrupted execution stack
+
+This arrangement improves overall kernel robustness.
+
+---
+
+## 10. GDT Initialization Flow
+
+Current initialization sequence:
+
+    Create TSS
+            ↓
+    Configure IST stacks
+            ↓
+    Configure RSP0
+            ↓
+    Create GDT
+            ↓
+    Add kernel descriptors
+            ↓
+    Add user descriptors
+            ↓
+    Add TSS descriptor
+            ↓
+    Load GDT
+            ↓
+    Load CS
+            ↓
+    Load DS/ES/SS
+            ↓
+    Load TSS
+            ↓
+    Store selectors
+
+This occurs during:
+
+    kernel_init()
+
+before interrupts are enabled.
+
+---
+
+## 11. Ring 3 Support
+
+Bulldog currently supports Ring 3 execution.
+
+The GDT provides:
+
+    User Code Segment
+    User Data Segment
+
+Accessors:
+
+    user_code_selector()
+    user_data_selector()
+
+These selectors are used during user-mode entry and privilege transitions.
+
+Current verified programs:
+
+    /bin/hello
+    /bin/goodbye
+
+Ring 3 support is operational.
+
+---
+
+## 12. Interaction With Interrupts
+
+The interrupt subsystem depends on:
+
+    Loaded GDT
+    Loaded TSS
+    Valid IST entries
+
+Current relationships:
+
+    Double Fault → IST0
+    Page Fault   → IST1
+    LAPIC Timer  → IST1
+
+Interrupt handling must not occur before GDT/TSS initialization completes.
+
+---
+
+## 13. Interaction With Memory Management
+
+Current memory requirements:
+
+    GDT must remain mapped
+    TSS must remain mapped
+    IST stacks must remain mapped
+    RSP0 stack must remain mapped
+
+The memory subsystem therefore treats these structures as permanent kernel allocations.
+
+Guard pages remain future work.
+
+---
+
+## 14. Interaction With Syscalls
+
+Current system-call support relies on:
+
+    User code selector
+    User data selector
+    RSP0 privilege stack
+
+When Ring 3 code invokes:
+
+    int 0x80
+
+the CPU transitions into kernel mode using the stack information contained within the TSS.
+
+User-mode execution therefore depends directly on correct GDT and TSS configuration.
+
+---
+
+## 15. Current Architecture Summary
+
+Implemented:
+
+    Kernel code descriptor
+    Kernel data descriptor
+    User code descriptor
+    User data descriptor
+    TSS descriptor
+    RSP0 privilege stack
+    Double-fault IST
+    LAPIC/Page-fault IST
+    Ring 3 support
+    TSS loading
+
+This architecture supports all currently verified user-mode functionality.
+
+---
+
+## 16. Future Work
 
 Planned improvements:
 
-- Guard pages around IST stacks  
-- User‑mode segments (Ring 3)  
-- Syscall entry stack (IST2)  
-- Per‑CPU TSS for SMP  
-- Document stack layout in memory diagrams  
-- Integration with user‑mode page tables
+    Guard pages around IST stacks
+    Additional IST entries
+    Per-CPU GDT structures
+    Per-CPU TSS structures
+    SMP support
+    IOAPIC integration
+
+These features are not currently implemented.
 
 ---
 
-## 8. Contributor Notes
+## Contributor Notes
 
-- IST stacks must remain aligned and unmoved  
-- GDT/TSS initialization must occur before enabling interrupts  
-- LAPIC timer and page‑fault handlers depend on IST1  
-- Double‑fault handler depends on IST0  
-- Do not modify stack sizes without updating `gdt.rs` and `kernel_init.md`
+- GDT initialization must occur before interrupts are enabled.
+- TSS loading must occur after GDT loading.
+- RSP0 must remain valid for Ring 3 transitions.
+- Double-fault handling depends on IST0.
+- LAPIC timer and page-fault handling depend on IST1.
+- Stack sizes and IST indices should remain synchronized with gdt.rs.
+- Review this document whenever GDT or TSS structures change.
 
 ---
 

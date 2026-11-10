@@ -1,139 +1,380 @@
-# Bulldog Kernel – Frame Allocator
+## Bulldog Kernel – Frame Allocator
 
-This document describes Bulldog’s physical frame allocator: the component responsible for
-handing out physical memory frames to the kernel, paging subsystem, heap allocator, and
-future user‑mode processes.
+Reviewed: November 2026
 
-It complements:
+This document describes Bulldog's current physical-frame allocator implementation.
 
-- `memory.md` (overview)
-- `memory-map.md` (physical/virtual map)
-- `hhdm.md` (direct physical map)
-- `paging.md` (page table operations)
+The frame allocator is responsible for supplying physical memory frames used by:
 
----
+    Paging
+    User-memory mappings
+    ELF loading
+    Kernel allocations
+    MMIO mappings
 
-## 1. Purpose
+It is one of the lowest-level memory-management components in the system.
 
-The frame allocator provides:
+This document reflects the current implementation found in:
 
-- Physical frames for page table creation  
-- Frames for kernel heap pages  
-- Frames for mapping ELF segments  
-- Frames for VFS buffers (future)  
-- Frames for user‑mode address spaces (future)  
-
-It is the lowest‑level memory allocator in the kernel.
+    kernel/src/paging.rs
+    kernel/src/memory.rs
 
 ---
 
-## 2. Input: Bootloader Memory Map
+## 1. Overview
 
-The allocator is built from the UEFI memory map passed via `BootInfo`.
+Bulldog currently implements a simple frame allocator designed for reliability and observability during OS bring-up.
 
-Usable regions:
+Current features:
 
-- `MemoryRegionKind::Usable`  
-- Size ≥ 2 MiB (Bulldog’s current constraint)  
+    BootInfo-driven initialization
+    Sequential frame allocation
+    Free-list recycling
+    User-frame reclamation
+    Frame reuse
 
-The allocator skips:
-
-- Firmware regions  
-- ACPI regions  
-- MMIO regions  
-- Kernel image region  
-- Bootloader allocations  
+The allocator currently favors simplicity over advanced allocation strategies.
 
 ---
 
-## 3. Allocation Strategy
+## 2. BootInfo Integration
 
-Bulldog currently uses a **linear bump allocator** for frames:
+The allocator is constructed using information provided by:
 
-```
-next → next free physical address
-end  → end of usable region
-```
+    BootInfo
 
-Allocation:
+Input sources:
 
-```
-frame = next
-next += 4096
-```
+    Memory regions
+    Memory-region types
+    Framebuffer information
 
-If `next + 4096 > end`, allocation fails.
+The allocator uses only regions marked:
 
-This strategy is:
+    MemoryRegionKind::Usable
 
-- Simple  
-- Deterministic  
-- Safe during early boot  
-- Sufficient for initial paging and heap setup  
-
-Future versions will replace this with a bitmap allocator.
+All other region types are ignored.
 
 ---
 
-## 4. Safety Invariants
+## 3. Region Selection
 
-- Allocator must only hand out frames from usable RAM  
-- Allocator must never overlap kernel image  
-- Allocator must never overlap bootloader structures  
-- Allocator must never hand out MMIO frames  
-- Allocator must never hand out ACPI frames  
-- Allocator must be initialized before paging  
-- Allocator must not be reinitialized  
+During initialization Bulldog scans the memory map looking for a usable region.
 
----
+Acceptance criteria:
 
-## 5. Integration Points
+    Region is marked usable
+    Region is at least 2 MiB
+    Region does not overlap the framebuffer
 
-### Paging
-Used by:
+The first acceptable region becomes the allocator's source of frames.
 
-- `map_to`  
-- Page table creation  
-- Kernel heap mapping  
-- ELF loader segment mapping  
+Current diagnostics report:
 
-### Kernel Heap
-`init_heap()` allocates frames for heap pages.
+    Allocator start address
+    Allocator end address
 
-### ELF Loader
-Allocates frames for:
-
-- `.text`  
-- `.data`  
-- `.bss`  
-- Stack pages  
-
-### Future Subsystems
-- VFS buffer cache  
-- Process address spaces  
-- Shared memory  
-- Slab allocator  
+during startup.
 
 ---
 
-## 6. Future Enhancements
+## 4. BulldogFrameAllocator
 
-### Bitmap Allocator
-Track free/used frames with a bitmap.
+Bulldog currently uses:
 
-### Region Coalescing
-Support multiple usable regions.
+    BulldogFrameAllocator
 
-### NUMA Awareness
-Per‑node frame pools.
+Internal state:
 
-### Guard Frames
-Protect kernel stacks and sensitive regions.
+    next
+    end
+    free_list
 
-### Frame Recycling
-Support freeing frames (not currently possible).
+Meaning:
+
+    next
+        Next sequential frame
+
+    end
+        End of usable region
+
+    free_list
+        Recycled frames
+
+This structure is initialized during:
+
+    paging::init()
+
+and remains globally available thereafter.
+
+---
+
+## 5. Sequential Allocation
+
+When no recycled frames exist, allocation is performed linearly.
+
+Current algorithm:
+
+    frame = next
+            ↓
+    next += 4096
+            ↓
+    return frame
+
+Frames are allocated in 4 KiB increments.
+
+Allocation fails when:
+
+    next + 4096 > end
+
+This behavior is deterministic and easy to debug.
+
+---
+
+## 6. Frame Recycling
+
+Bulldog now supports frame reuse.
+
+Current workflow:
+
+    User process exits
+            ↓
+    User pages unmapped
+            ↓
+    Frames returned
+            ↓
+    Frames stored in free_list
+
+This capability was introduced alongside the user-mode and process-management subsystems.
+
+---
+
+## 7. Allocation Order
+
+Current priority:
+
+    free_list
+            ↓
+    sequential allocation
+
+Allocation process:
+
+    Check free_list
+            ↓
+    Frame available?
+            ↓
+    Yes → reuse frame
+            ↓
+    No
+            ↓
+    Allocate from next
+
+This prevents unnecessary consumption of new physical memory.
+
+---
+
+## 8. Frame Release
+
+Frames are returned through:
+
+    free_frame()
+
+Current users:
+
+    unmap_current_user()
+
+Frame release occurs when user-memory cleanup is performed during:
+
+    sys_exit()
+
+This allows memory to be recycled for subsequent user processes.
+
+---
+
+## 9. User-Mode Integration
+
+The frame allocator is now heavily involved in user-mode execution.
+
+Current responsibilities include:
+
+    User segment allocation
+    User-stack allocation
+    ELF loading
+    Process cleanup
+
+Current helpers using the allocator:
+
+    map_user_page()
+    map_user_segment()
+    alloc_user_stack()
+
+---
+
+## 10. ELF Loader Integration
+
+The ELF loader allocates frames through the frame allocator.
+
+Current workflow:
+
+    Parse ELF
+            ↓
+    Read program headers
+            ↓
+    Allocate physical frames
+            ↓
+    Create mappings
+            ↓
+    Copy ELF segment data
+            ↓
+    Zero BSS
+
+The allocator provides the physical memory backing all executable user programs.
+
+---
+
+## 11. Paging Integration
+
+The frame allocator supplies frames to:
+
+    Page-table creation
+    User-page mappings
+    MMIO mappings
+    Runtime virtual-memory management
+
+Common users include:
+
+    map_page()
+    map_lapic_mmio()
+    map_user_page()
+
+The paging subsystem depends directly on allocator correctness.
+
+---
+
+## 12. Relationship To HHDM
+
+Allocated frames are accessed through:
+
+    Higher-Half Direct Map (HHDM)
+
+Current usage:
+
+    Frame inspection
+    ELF segment copying
+    Memory initialization
+
+This allows physical memory to be manipulated through virtual addresses.
+
+---
+
+## 13. Current Limitations
+
+Current limitations include:
+
+    Single usable-region selection
+    No region coalescing
+    No allocation statistics
+    No NUMA awareness
+    No guard frames
+    No allocation balancing
+
+These limitations are acceptable during the current stage of development.
+
+---
+
+## 14. Safety Invariants
+
+The allocator must:
+
+    Allocate only usable RAM
+    Avoid framebuffer overlap
+    Avoid MMIO regions
+    Avoid reserved firmware regions
+    Avoid ACPI regions
+    Return only aligned frames
+
+Violation of these assumptions will corrupt memory management.
+
+---
+
+## 15. Relationship To FrameBitmap
+
+Bulldog also contains:
+
+    FrameBitmap
+
+The bitmap subsystem currently provides:
+
+    mark_used()
+    mark_free()
+    is_used()
+
+The allocator currently relies primarily on:
+
+    Sequential allocation
+    free_list recycling
+
+Future revisions may integrate allocator and bitmap management more tightly.
+
+---
+
+## 16. Current Lifecycle
+
+Current allocation lifecycle:
+
+    BootInfo
+            ↓
+    BulldogFrameAllocator
+            ↓
+    allocate_frame()
+            ↓
+    User/Kernel Mapping
+            ↓
+    Process Exit
+            ↓
+    free_frame()
+            ↓
+    free_list
+            ↓
+    Reuse
+
+This lifecycle has been verified through:
+
+    hello
+            ↓
+    goodbye
+
+user-process chaining tests.
+
+---
+
+## 17. Future Enhancements
+
+Planned improvements:
+
+    Full bitmap allocation
+    Multi-region support
+    Guard frames
+    Allocation statistics
+    NUMA awareness
+    Per-CPU frame pools
+    Fragmentation analysis
+
+These features are not currently implemented.
+
+---
+
+## Contributor Notes
+
+- Keep allocator behavior deterministic.
+- Preserve allocator diagnostics during development.
+- User-memory cleanup depends on frame recycling.
+- Frame reuse is intentional and should not be removed.
+- Review allocator behavior whenever paging or user-memory code changes.
+- Avoid introducing complexity before scheduler work stabilizes.
 
 ---
 
 ## License
-MIT or Apache 2.0 — to be determined.
+
+MIT or Apache 2.0 — TBD.

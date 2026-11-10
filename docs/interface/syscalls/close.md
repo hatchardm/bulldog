@@ -1,38 +1,46 @@
-# Bulldog Kernel – `close` Syscall
+## Bulldog Kernel – close Syscall
 
-Closes a file descriptor previously returned by `open`.
+Reviewed: November 2026
 
----
+Current syscall number:
 
-## 1. Prototype
+    7
 
-```
-close(fd: u64) -> SysResult<()>
-```
+### Prototype
 
----
+close(fd: u64) -> int
 
-## 2. Behavior
+Returns:
 
-- Releases the file descriptor  
-- Decrements reference count on the underlying VFS node  
-- Removes the FD from the process’s file descriptor table  
-- Returns success on valid FD  
+    0 on success
+    negative errno on failure
 
-Closing an FD does **not** necessarily free the underlying node immediately —  
-future Bulldog versions may support shared descriptors, pipes, or reference‑counted objects.
+### Behavior
 
----
+- Releases the file descriptor
+- Removes the descriptor from the FD table
+- Makes the descriptor available for reuse
+- Returns 0 on success
 
-## 3. Errors
+Closed descriptors may later be reallocated by open().
 
-- Invalid FD  
-- FD not open  
-- Underlying VFS node error  
+### Error Handling
 
-Errors are returned as negative values.
+EBADF
 
----
+Returned when:
 
-## License
+    FD is invalid
+    FD is not currently open
+
+### Harness Coverage
+
+Validated paths:
+
+    Valid close
+    Invalid FD
+    FD reuse after close
+
+### License
+
 MIT or Apache 2.0 — TBD.

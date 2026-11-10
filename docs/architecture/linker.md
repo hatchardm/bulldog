@@ -1,240 +1,327 @@
-# Bulldog Kernel – Linker Script and ELF Layout (Current Implementation)
+## Bulldog Kernel – Linker and Executable Image Layout
 
-This document describes Bulldog’s kernel ELF layout, linker script structure, section
-placement, and higher‑half virtual address mapping. It reflects the **current** behavior of
-Bulldog’s linker script and how the kernel binary is organized in memory.
+Reviewed: November 2026
 
-Bulldog targets the `x86_64-bulldog` architecture and uses a higher‑half linking strategy
-that maps the kernel into the upper canonical half of the virtual address space.
+This document describes the current linker architecture used by Bulldog's executable kernel image.
 
----
+It reflects the implementation found in:
 
-## Overview
+    kernel-bin/layout.ld
+    kernel-bin/src/main.rs
 
-Bulldog’s linker script defines:
-
-- The kernel’s higher‑half virtual base address  
-- The physical load address used by the bootloader  
-- Placement of ELF sections (`.text`, `.rodata`, `.data`, `.bss`)  
-- Alignment and padding rules  
-- Symbols exported for use by the kernel (e.g., section boundaries)  
-- Memory regions used during boot and runtime  
-
-The linker script is a critical part of the kernel’s boot and memory architecture.
+The linker script controls the layout of the final executable image loaded by the Bulldog bootloader.
 
 ---
 
-## Higher‑Half Linking Strategy
+## 1. Overview
 
-Bulldog is linked to run at a virtual address above:
+Bulldog separates:
 
-```text
-0xFFFF_8000_0000_0000
-```
+    bootloader
+    boot-proto
+    kernel
+    kernel-bin
 
-This ensures:
+The final executable loaded by the bootloader is produced by:
 
-- Kernel memory is isolated from user space  
-- Kernel addresses are stable and deterministic  
-- Paging can map the kernel into a fixed region  
-- Direct physical mapping can coexist with kernel code  
+    kernel-bin
 
-The kernel is **loaded physically** at a low address (e.g., `0x0010_0000`) but **executes
-virtually** in the higher half.
+The linker script defines:
 
----
+    Entry point
+    Section ordering
+    Load address
+    Stack placement
 
-## Physical Load Address
-
-The bootloader loads the kernel ELF into a physical region such as:
-
-```text
-0x0010_0000  (1 MiB)
-```
-
-This region contains:
-
-- ELF headers  
-- Program segments  
-- Kernel code and data  
-
-The linker script ensures that:
-
-- Virtual addresses are in the higher half  
-- Physical addresses remain low  
-- The bootloader can map physical → virtual correctly  
+The script intentionally remains simple.
 
 ---
 
-## Virtual Address Layout (Linker View)
+## 2. Startup Path
 
-The linker defines the following virtual layout:
+The current startup sequence is:
 
-```text
-KERNEL_BASE = 0xFFFF_8000_0000_0000
+    UEFI Firmware
+            ↓
+    bootloader
+            ↓
+    kernel-bin image
+            ↓
+    kernel_entry()
+            ↓
+    paging::init()
+            ↓
+    kernel_main()
 
-.text   → KERNEL_BASE + 0x0000_0000
-.rodata → KERNEL_BASE + 0x00XX_XXXX
-.data   → KERNEL_BASE + 0x00YY_YYYY
-.bss    → KERNEL_BASE + 0x00ZZ_ZZZZ
-```
+The linker script ensures the CPU begins execution at:
 
-All sections are page‑aligned to simplify paging and debugging.
+    kernel_entry
 
----
-
-## ELF Sections
-
-### `.text`
-
-Contains:
-
-- Kernel code  
-- Interrupt handlers  
-- Syscall entry stubs  
-- Early boot routines  
-
-Mapped as:
-
-- Read‑only  
-- Executable  
-
-### `.rodata`
-
-Contains:
-
-- Constant data  
-- Jump tables  
-- Read‑only metadata  
-
-Mapped as:
-
-- Read‑only  
-- Non‑executable  
-
-### `.data`
-
-Contains:
-
-- Initialized global variables  
-- Kernel structures requiring write access  
-
-Mapped as:
-
-- Read/write  
-- Non‑executable  
-
-### `.bss`
-
-Contains:
-
-- Zero‑initialized globals  
-- Static buffers  
-
-The kernel entry point zeroes this region before enabling interrupts.
+after bootloader handoff.
 
 ---
 
-## Linker‑Defined Symbols
+## 3. Entry Point
 
-The linker script exports symbols used by the kernel, such as:
+The linker script declares:
 
-```text
-_start
-_etext
-_sdata
-_edata
-_sbss
-_ebss
-_kernel_start
-_kernel_end
-```
+    ENTRY(kernel_entry)
 
-These symbols are used for:
+This symbol becomes the first code executed inside the kernel image.
 
-- BSS zeroing  
-- Heap initialization  
-- Memory map validation  
-- Debugging and logging  
+Current implementation:
 
----
+    kernel-bin/src/main.rs
 
-## Alignment Rules
+contains:
 
-Bulldog enforces:
+    kernel_entry()
 
-- 4 KiB alignment for all sections  
-- 16‑byte alignment for stack frames  
-- Page alignment for direct‑map regions  
+which receives:
 
-This ensures compatibility with paging and simplifies debugging.
+    &mut BootInfo
+
+from the bootloader.
 
 ---
 
-## Program Headers
+## 4. Load Address
 
-The kernel ELF typically contains:
+The image currently begins at:
 
-- One loadable segment for `.text` and `.rodata`  
-- One loadable segment for `.data` and `.bss`  
+    0x00100000
 
-This minimizes bootloader complexity and ensures predictable memory layout.
+(1 MiB)
 
----
+The linker script establishes:
 
-## Interaction with Paging
+    . = 1M;
 
-The linker script defines **virtual** addresses.  
-Paging maps these virtual addresses to physical memory.
+All following sections are placed relative to this location.
 
-Example mapping:
-
-```text
-virt: 0xFFFF_8000_0000_0000  → phys: 0x0010_0000
-virt: 0xFFFF_8000_0020_0000  → phys: 0x0030_0000
-```
-
-The bootloader or early kernel code installs these mappings before jumping to the higher‑half entry point.
-
-See also:
-
-- `boot.md`  
-- `memory.md`  
-- `layout.md`
+The bootloader loads the executable image into memory and transfers control to the entry point.
 
 ---
 
-## Debugging Notes
+## 5. Section Layout
 
-- Kernel addresses in logs always reflect higher‑half virtual addresses  
-- Physical addresses are used only during early boot and allocator setup  
-- GDB can be configured with the kernel’s virtual base for symbolic debugging  
-- Section boundaries (`_etext`, `_edata`, etc.) are essential for diagnosing memory issues  
+Current section order:
+
+    .text.entry_point
+    .text
+    .rodata
+    .data
+    .bss
+    .stack
+
+This layout keeps startup code at the beginning of the image and places runtime data afterward.
 
 ---
 
-## Future Enhancements
+## 6. Entry Section
 
-Planned improvements:
+The linker script preserves:
 
-- KASLR (kernel address randomization)  
-- Separate `.init` and `.fini` sections  
-- Per‑CPU linker‑defined regions  
-- Dedicated section for syscall stubs  
-- Fine‑grained memory permissions  
+    .text.entry_point
+
+using:
+
+    KEEP(*(.text.entry_point))
+
+The kernel entry function is explicitly placed into this section.
+
+Purpose:
+
+    Stable startup location
+    Guaranteed inclusion
+    Clear handoff target
+
+Without KEEP(), the linker could potentially discard the section during optimization.
+
+---
+
+## 7. Text Section
+
+The .text section contains executable code.
+
+Current contents include:
+
+    kernel_entry()
+    kernel crate code
+    interrupt handlers
+    syscall handlers
+    supporting runtime code
+
+The linker places:
+
+    *(.text*)
+
+into this section.
+
+---
+
+## 8. Read-Only Data
+
+The .rodata section contains:
+
+    String literals
+    Constant tables
+    Static read-only values
+
+Current rule:
+
+    *(.rodata*)
+
+---
+
+## 9. Initialized Data
+
+The .data section contains:
+
+    Initialized globals
+    Writable runtime data
+
+Current rule:
+
+    *(.data*)
+
+---
+
+## 10. Uninitialized Data
+
+The .bss section contains:
+
+    Zero-initialized globals
+    Static buffers
+    Runtime storage
+
+Current rule:
+
+    *(.bss*)
+    *(COMMON)
+
+---
+
+## 11. Stack Section
+
+The linker script defines:
+
+    .stack
+
+aligned to:
+
+    4 KiB
+
+Current rule:
+
+    .stack ALIGN(4K)
+
+This provides a predictable location for statically allocated kernel stack structures.
+
+---
+
+## 12. Alignment
+
+Current alignment guarantees:
+
+    4 KiB stack alignment
+
+Future alignment requirements may expand as memory-management features evolve.
+
+The current script deliberately avoids unnecessary complexity.
+
+---
+
+## 13. Relationship To kernel-bin
+
+The linker script exists specifically for:
+
+    kernel-bin
+
+Responsibilities:
+
+    Define image layout
+    Define entry point
+    Group executable sections
+
+It does not contain operating-system logic.
+
+---
+
+## 14. Relationship To The kernel Crate
+
+The kernel crate provides:
+
+    Memory management
+    Filesystems
+    Syscalls
+    APIC support
+    Usermode support
+    Process management
+
+The linker script merely determines how this code is arranged in the executable image.
+
+---
+
+## 15. Interaction With The Bootloader
+
+The bootloader:
+
+    Loads the image
+    Builds BootInfo
+    Initializes paging
+    Transfers control
+
+The linker script provides the structure required for that handoff.
+
+Current transfer path:
+
+    bootloader
+            ↓
+    kernel_entry()
+            ↓
+    kernel_main()
+
+---
+
+## 16. Current Design Philosophy
+
+The current linker script intentionally prioritizes:
+
+    Simplicity
+    Predictability
+    Debuggability
+
+Bulldog currently uses a straightforward executable layout rather than a highly optimized or heavily segmented kernel image.
+
+---
+
+## 17. Future Enhancements
+
+Possible future additions:
+
+    Dedicated .init section
+    Dedicated .fini section
+    Per-CPU regions
+    Link-time validation
+    KASLR support
+    Additional protection-oriented sections
+
+These are not currently implemented.
 
 ---
 
 ## Contributor Notes
 
-- Keep the linker script aligned with the memory layout specification  
-- Document all new sections and exported symbols  
-- Ensure alignment rules remain consistent with paging  
-- Avoid introducing unnecessary segments or relocations  
-- Validate that all sections map cleanly into the higher‑half region  
+- Keep linker changes simple and well documented.
+- Preserve the kernel_entry() entry point.
+- Preserve .text.entry_point placement.
+- Update documentation whenever new sections are added.
+- Review linker changes alongside bootloader changes.
+- Validate startup behaviour after linker modifications.
 
 ---
 
 ## License
 
-MIT or Apache 2.0 — to be determined.
+MIT or Apache 2.0 — TBD.

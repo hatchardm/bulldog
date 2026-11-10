@@ -1,221 +1,328 @@
-# Bulldog Kernel – Memory Layout (Current Implementation)
+## Bulldog Kernel – Memory Layout (Current Implementation)
 
-> **Disclaimer:**  
-> This document describes Bulldog’s *current* memory layout as implemented in the kernel today.  
-> It does **not** represent the full long‑term design.  
-> Planned features such as guard pages, user‑mode address spaces, IOAPIC regions, per‑CPU stacks,  
-> and KASLR will be documented once implemented.  
->  
-> For subsystem‑specific details, see:  
-> - `memory.md` (paging, allocators, direct map)  
-> - `gdt.md` (TSS, IST stacks)  
-> - `apic.md` (LAPIC MMIO region)  
-> - `kernel_init.md` (initialization sequence)
+Reviewed: November 2026
 
-This file provides a high‑level view of the virtual and physical memory layout used by Bulldog today.  
-It reflects the real behavior of the kernel and bootloader, not the future architecture.
+Disclaimer:
+
+This document describes Bulldog's current memory layout as implemented today.
+
+It does not represent the final long-term memory architecture.
+
+Features such as:
+
+    Per-process address spaces
+    Guard pages
+    Copy-on-write
+    Memory-mapped files
+    KASLR
+    NUMA support
+
+remain future work and will be documented when implemented.
+
+For subsystem-specific details see:
+
+    memory.md
+    hhdm.md
+    paging.md
+    page-table.md
+    frame-allocator.md
+    kernel_init.md
+
+This document provides a high-level view of Bulldog's current physical and virtual memory layout.
 
 ---
 
 ## 1. Overview
 
-Bulldog uses a higher‑half kernel design with:
+Bulldog currently uses a higher-half kernel architecture featuring:
 
-- A stable higher‑half kernel region  
-- A direct physical memory map (bootloader‑provided offset)  
-- Statically allocated kernel stacks (including IST stacks)  
-- A fixed LAPIC MMIO virtual address  
-- No user‑mode memory yet  
-- No guard pages yet  
+    Higher-half kernel execution
+    Higher-Half Direct Mapping (HHDM)
+    Statically allocated kernel stacks
+    Dedicated IST stacks
+    Fixed LAPIC MMIO mappings
+    User-mode memory support
+    Shared address-space model
 
-This layout is deterministic and optimized for debugging and contributor clarity.
+Current limitations include:
+
+    No guard pages
+    No per-process page tables
+    No user heap
+    No copy-on-write
+
+The layout is intentionally simple and optimized for debugging and architectural clarity.
 
 ---
 
 ## 2. Virtual Address Space (Current)
 
-```
-0xFFFF_FFFF_FFFF_FFFF  ────────────────────────────────  Canonical high
-|                     Higher-Half Kernel Space          |
-|                                                       |
-|  Kernel text / rodata                                 |
-|  Kernel data / BSS                                    |
-|  Kernel heap                                          |
-|  Kernel stacks                                        |
-|  LAPIC MMIO region (0xFFFF_FF00_0000_0000)            |
-|  Direct physical map (bootloader offset)              |
-|                                                       |
-0xFFFF_8000_0000_0000  ────────────────────────────────  Kernel base
-|                     Reserved (unused)                 |
-|                                                       |
-0x0000_0000_0000_0000  ────────────────────────────────  Canonical low
-```
+    0xFFFFFFFFFFFFFFFF
+    ────────────────────────────────
+        Higher-Half Kernel Space
 
-### Key points:
+        Kernel text
+        Kernel data
+        Kernel heap
+        Kernel stacks
+        LAPIC MMIO mappings
+        HHDM region
+        Runtime kernel structures
 
-- Kernel occupies the upper canonical half  
-- User space is **not implemented**  
-- Direct map uses the offset provided by the bootloader  
-- LAPIC MMIO is mapped at a fixed higher‑half address  
-- Kernel stacks (including IST stacks) live in higher‑half static regions  
+    ────────────────────────────────
+    0xFFFF800000000000
+        HHDM Base
+
+    ────────────────────────────────
+
+        User mappings
+        ELF segments
+        User stacks
+
+    ────────────────────────────────
+    0x0000000000000000
+
+### Key Points
+
+- Kernel executes entirely in higher-half memory.
+- HHDM supplies direct access to physical memory.
+- LAPIC MMIO uses a fixed higher-half address.
+- User-mode memory is implemented.
+- User pages coexist within the current active address space.
+- Separate process address spaces are future work.
 
 ---
 
 ## 3. Kernel Virtual Regions
 
-### Kernel Text / Read‑Only Data
+### Kernel Text / Read-Only Data
 
-Loaded by the bootloader into higher‑half memory.
+Loaded by the bootloader and executed in higher-half memory.
 
-Mapped as:
+Characteristics:
 
-- Read‑only  
-- Executable  
+    Read-only
+    Executable
 
-### Kernel Data / BSS
+Contains:
 
-Mapped as:
-
-- Read/write  
-- Non‑executable  
-
-### Kernel Heap
-
-Initialized during `kernel_init` using:
-
-- Temporary pre‑heap allocator  
-- Full bitmap allocator  
-
-Grows upward from a fixed region in higher‑half space.
-
-### Kernel Stacks
-
-Bulldog currently uses:
-
-- A main kernel stack  
-- Two IST stacks:  
-  - `STACK` (double fault)  
-  - `LAPIC_STACK` (LAPIC timer + page fault)
-
-All stacks:
-
-- Are statically allocated  
-- Are 128 KiB  
-- Are 16‑byte aligned  
-- Have **no guard pages yet**  
+    Kernel code
+    Constant data
 
 ---
 
-## 4. Direct Physical Memory Map
+### Kernel Data / BSS
 
-The bootloader provides a physical‑to‑virtual offset:
+Characteristics:
 
-```
-virt = phys + phys_mem_offset
-```
+    Read/Write
+    Non-executable
 
-This region is used for:
+Contains:
 
-- Page‑table access  
-- Frame allocation  
-- LAPIC stack remapping  
-- Logging physical memory regions  
+    Global variables
+    Runtime kernel state
 
-Mapped as:
+---
 
-- Read/write  
-- Non‑executable  
+### Kernel Heap
+
+Initialized during:
+
+    kernel_init()
+
+Memory-management components include:
+
+    PreHeapAllocator
+    BulldogFrameAllocator
+    FrameBitmap
+
+The heap provides dynamic memory allocation for higher-level kernel subsystems.
+
+---
+
+### Kernel Stacks
+
+Bulldog currently maintains:
+
+    Main kernel stack
+    Double-fault IST stack
+    LAPIC/Page-fault IST stack
+
+Current characteristics:
+
+    128 KiB each
+    16-byte aligned
+    Statically allocated
+    Higher-half addresses
+
+Guard pages are not currently implemented.
+
+---
+
+## 4. Higher-Half Direct Map (HHDM)
+
+Bulldog uses a bootloader-provided direct physical mapping.
+
+Address conversion:
+
+    virtual = physical + physical_memory_offset
+
+The HHDM is used for:
+
+    Page-table access
+    Frame allocation
+    ELF loading
+    User-memory management
+    Physical-memory inspection
+
+The HHDM implementation is documented in:
+
+    memory/hhdm.md
 
 ---
 
 ## 5. LAPIC MMIO Region
 
-Mapped at a fixed virtual address:
+The Local APIC is mapped at a fixed virtual address.
 
-```
-0xFFFF_FF00_0000_0000
-```
+Virtual:
 
-Mapped to physical:
+    LAPIC_VIRT_BASE
 
-```
-0xFEE0_0000
-```
+Physical:
 
-Flags:
+    0xFEE00000
 
-- PRESENT  
-- WRITABLE  
-- NO_EXECUTE  
+Current flags:
+
+    PRESENT
+    WRITABLE
+    NO_EXECUTE
 
 Used by:
 
-- `lapic_read` / `lapic_write`  
-- `setup_apic()`  
+    lapic_read()
+    lapic_write()
+    setup_apic()
+
+The mapping exists before APIC initialization begins.
 
 ---
 
-## 6. Physical Memory Layout (Current)
+## 6. Physical Memory Layout
 
-A typical bootloader memory map includes:
+The bootloader provides the physical-memory map through:
 
-```
-0x0000_0000 – 0x0009_FFFF   → Low memory (unused by kernel)
-0x0010_0000 – 0x00FF_FFFF   → Kernel ELF load region
-0x0100_0000 – ...           → Usable RAM (frame allocator)
-ACPI / MMIO regions         → Reserved
-```
+    BootInfo
 
-Bulldog uses:
+Typical regions include:
 
-- Bootloader memory map  
-- `BootInfoFrameAllocator`  
-- Bitmap tracking of used frames  
+    Low memory
+    Kernel image
+    Usable RAM
+    Reserved regions
+    ACPI regions
+    MMIO regions
 
----
+The kernel uses this information to construct:
 
-## 7. Reserved Regions (Current)
-
-The following virtual regions are reserved but not yet used:
-
-- `0xFFFF_0000_0000_0000` → `0xFFFF_7FFF_FFFF_FFFF`  
-  Reserved for future kernel subsystems  
-
-- `0x0000_0000_0000_0000` → `0xFFFF_7FFF_FFFF_FFFF`  
-  User space (future)  
-
-Guard pages are planned but not implemented.
+    BulldogFrameAllocator
+    FrameBitmap
+    Heap allocator
+    Memory-management structures
 
 ---
 
-## 8. Future Layout Extensions
+## 7. User Memory Layout
 
-Planned but **not implemented**:
+Bulldog currently supports user-mode memory.
 
-- User‑mode address spaces  
-- Per‑process page tables  
-- Guard pages around stacks and heap  
-- Copy‑on‑write  
-- Shared memory  
-- Memory‑mapped files  
-- IOAPIC MMIO region  
-- SMP per‑CPU stacks  
-- KASLR  
+Current allocations include:
 
-These will be documented once implemented.
+    ELF text segments
+    ELF data segments
+    ELF BSS segments
+    User stacks
 
----
+Examples:
 
-## 9. Contributor Notes
+    /bin/hello
+    /bin/goodbye
 
-- This file describes the *current* layout, not the final design  
-- See `memory.md`, `gdt.md`, `apic.md`, and `kernel_init.md` for subsystem details  
-- Keep this document updated as new regions are added  
-- Avoid introducing overlapping or ambiguous address ranges  
-- Maintain deterministic mappings for debugging  
+Current user pages are marked:
+
+    USER_ACCESSIBLE
+
+and tracked for cleanup and frame recycling.
 
 ---
 
-## License
+## 8. User Stack Layout
 
-MIT or Apache 2.0 — TBD.
+User stacks are created through:
+
+    alloc_user_stack()
+
+Current implementation:
+
+    64 KiB size
+    4 KiB pages
+    Dynamically allocated frames
+    USER_ACCESSIBLE permissions
+
+The stack top is passed directly to:
+
+    enter_user_mode()
+
+during process startup.
+
+---
+
+## 9. Current Kernel Mappings
+
+Current kernel mappings include:
+
+    Kernel image
+    Kernel heap
+    Kernel stacks
+    HHDM
+    LAPIC MMIO
+    Framebuffer
+    GDT
+    TSS
+    IST stacks
+
+These mappings remain active throughout kernel execution.
+
+---
+
+## 10. Current User Mappings
+
+Current user mappings include:
+
+    ELF segments
+    User stacks
+
+User pages are tracked through:
+
+    USER_PAGES
+
+to support:
+
+    Process cleanup
+    Frame recycling
+    Memory reclamation
+
+---
+
+## 11. Reserved Regions
+
+The following areas are reserved for future growth:
+
+### Future Kernel Regions
+
+    Additional MMIO regions
+    IOAPIC mappings
+    Per-CPU data
+    Scheduler structures

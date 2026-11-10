@@ -185,6 +185,7 @@ pub fn kernel_init(
 ) -> Result<(), ()> {
     info!("kernel_init: starting");
 
+
     // Heap
     {
         let mut mapper_guard = MAPPER.lock();

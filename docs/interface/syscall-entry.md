@@ -1,149 +1,323 @@
-# Bulldog Kernel – Syscall Entry Path
+## Bulldog Kernel – Syscall Entry Path
 
-This document describes the syscall entry mechanism used by Bulldog, including the syscall
-vector, MSR configuration, privilege switching, and the transition from user mode to kernel
-mode.
+Reviewed: November 2026
 
-It complements:
+This document describes Bulldog's current syscall entry mechanism.
 
-- `syscall.md`
-- `syscall-table.md`
-- `dispatcher.md`
-- `privilege-switching.md`
-- `exec.md`
-- `execve.md`
+It reflects the implementation used by:
+
+    syscall.rs
+    dispatcher.rs
+    privilege-switching.md
+
+and the syscall harness.
+
+This document describes the current implementation rather than future syscall designs.
 
 ---
 
 ## 1. Overview
 
-Syscalls provide controlled entry into the kernel from user mode. Bulldog uses the x86_64
-`syscall` / `sysret` instruction pair for fast privilege switching.
+Syscalls provide the only legal mechanism for user-mode code to enter the kernel.
 
-Syscall entry is routed through a dedicated IDT vector.
+Bulldog currently uses:
+
+    Interrupt-based syscall entry
+
+rather than:
+
+    syscall/sysret MSR-based entry
+
+User-mode software invokes a dedicated syscall interrupt vector that transitions execution from:
+
+    Ring 3
+        ↓
+    Ring 0
+
+under kernel control.
 
 ---
 
 ## 2. Syscall Vector
 
-Bulldog reserves a vector for syscall entry:
+Bulldog reserves:
 
-```
-SYSCALL_VECTOR
-```
+    SYSCALL_VECTOR
 
-This vector is excluded from default handlers in `interrupts.rs`.
+for syscall entry.
 
-Syscalls do not use the IDT directly; they use MSRs to define entry points.
+Current configuration:
+
+    Vector = 0x80
+    DPL    = 3
+
+Properties:
+
+    User callable
+    Installed by syscall subsystem
+    Not installed by interrupts::init_idt()
+    Reserved exclusively for syscalls
+
+This vector forms the entry point into the syscall subsystem.
 
 ---
 
-## 3. Required MSRs
+## 3. Why A Dedicated Vector
 
-Bulldog configures:
+Using a dedicated vector provides:
 
-### `STAR`
-Defines segment selectors for syscall entry and exit.
+    Controlled kernel entry
+    Explicit privilege transitions
+    Simple debugging
+    Deterministic behaviour
 
-### `LSTAR`
-Defines the 64‑bit syscall entry point.
+It also separates syscall handling from:
 
-### `FMASK`
-Defines which RFLAGS bits are cleared on syscall entry.
-
-These MSRs are configured during syscall initialization.
+    Exceptions
+    LAPIC interrupts
+    Spurious interrupts
 
 ---
 
 ## 4. Entry Path
 
-When user mode executes:
+Current syscall flow:
 
-```
-syscall
-```
+    User Program
+            ↓
+    int 0x80
+            ↓
+    IDT Gate
+            ↓
+    CPU privilege transition
+            ↓
+    TSS.rsp0 activation
+            ↓
+    Kernel entry stub
+            ↓
+    syscall_entry()
+            ↓
+    syscall_dispatch()
+            ↓
+    Syscall Handler
 
-The CPU performs:
-
-1. Save RIP → RCX  
-2. Save RFLAGS → R11  
-3. Load kernel CS/SS from `STAR`  
-4. Jump to `LSTAR` entry point  
-5. Switch to kernel stack (via TSS)  
-6. Begin executing syscall handler  
-
-Bulldog’s syscall entry point:
-
-- Saves volatile registers  
-- Builds a syscall frame  
-- Dispatches to the syscall table  
-- Restores registers  
-- Returns via `sysret`  
-
----
-
-## 5. Syscall Frame
-
-The syscall frame contains:
-
-- User RIP  
-- User RFLAGS  
-- User RCX  
-- User R11  
-- Arguments in registers  
-- Kernel stack pointer  
-
-This frame is used by the dispatcher.
+This is the current Ring 3 → Ring 0 path.
 
 ---
 
-## 6. Dispatcher
+## 5. Privilege Transition
 
-The dispatcher:
+The syscall gate is configured with:
 
-1. Reads syscall number  
-2. Validates it  
-3. Calls the corresponding handler  
-4. Returns result in RAX  
+    DPL = 3
 
-Syscall table is documented in `syscall-table.md`.
+allowing invocation from user mode.
 
----
+CPU actions:
 
-## 7. Return Path
+    Validate IDT gate
+            ↓
+    Switch to Ring 0
+            ↓
+    Load RSP0 from TSS
+            ↓
+    Push interrupt frame
+            ↓
+    Execute kernel entry path
 
-Syscalls return via:
-
-```
-sysretq
-```
-
-This restores:
-
-- User RIP  
-- User RFLAGS  
-- User RCX  
-- User R11  
-- User stack  
-
-Sysret requires:
-
-- User RIP to be canonical  
-- User CS to be a valid user segment  
-- RFLAGS to be sanitized  
+The CPU therefore never executes kernel code using the user stack.
 
 ---
 
-## 8. Future Enhancements
+## 6. Stack Switching
 
-- Per‑thread syscall stacks  
-- Syscall filtering  
-- Syscall tracing  
-- Syscall restart  
-- VDSO support  
-- Fast user‑mode time queries  
+Stack switching is provided by:
+
+    TSS.rsp0
+
+Backing stack:
+
+    KERNEL_STACK
+
+Purpose:
+
+    Provide trusted kernel execution stack
+    Isolate kernel execution from user memory
+    Support reliable syscall execution
+
+All syscall entry begins on this stack.
+
+---
+
+## 7. Entry Stub Responsibilities
+
+The syscall entry stub is responsible for:
+
+    Preserving required registers
+    Capturing user context
+    Building syscall state
+    Calling syscall_entry()
+
+The stub should remain:
+
+    Minimal
+    Deterministic
+    Easy to audit
+
+---
+
+## 8. syscall_entry()
+
+syscall_entry() provides the Rust entry point into the syscall subsystem.
+
+Responsibilities:
+
+    Extract syscall number
+    Extract syscall arguments
+    Invoke dispatcher
+    Return syscall result
+
+This function acts as the bridge between low-level entry code and kernel syscall handlers.
+
+---
+
+## 9. Dispatcher Integration
+
+After entry:
+
+    syscall_dispatch()
+
+performs:
+
+    Syscall lookup
+    Handler dispatch
+    Error handling
+
+Typical flow:
+
+    Syscall Number
+            ↓
+    Lookup Table
+            ↓
+      Found?
+      /    \
+    Yes     No
+     |       |
+     ↓       ↓
+ Handler   ENOSYS
+     |
+     ↓
+ Return
+
+---
+
+## 10. Return Path
+
+After syscall completion:
+
+    Return value → RAX
+            ↓
+    Restore user context
+            ↓
+    Restore privilege state
+            ↓
+    Return to Ring 3
+
+Execution resumes at the instruction following:
+
+    int 0x80
+
+in the calling user process.
+
+---
+
+## 11. Current Syscall Flow Example
+
+Example:
+
+    /bin/hello
+            ↓
+    int 0x80
+            ↓
+    sys_write()
+            ↓
+    Return
+            ↓
+    Continue User Execution
+
+The syscall harness validates this path extensively.
+
+---
+
+## 12. Error Handling
+
+Invalid syscall numbers return:
+
+    ENOSYS
+
+rather than causing exceptions.
+
+Example:
+
+    Unknown syscall 999
+            ↓
+    ENOSYS
+
+This keeps syscall behaviour deterministic.
+
+---
+
+## 13. Current Architecture Summary
+
+Implemented:
+
+    Ring 3 syscall entry
+    IDT syscall vector
+    DPL=3 gate
+    TSS stack switching
+    Dispatcher integration
+    Return-value handling
+    Syscall harness validation
+
+Verified through:
+
+    sys_write
+    sys_read
+    sys_open
+    sys_close
+    sys_alloc
+    sys_free
+    sys_exit
+
+---
+
+## 14. Future Enhancements
+
+Planned improvements:
+
+    Per-process kernel stacks
+    Per-CPU kernel stacks
+    SMP support
+    Syscall tracing
+    Syscall filtering
+    User-pointer validation
+    Advanced syscall dispatch
+
+These features are not currently implemented.
+
+---
+
+## Contributor Notes
+
+- SYSCALL_VECTOR is reserved exclusively for syscall entry.
+- The syscall vector must have DPL=3.
+- TSS.rsp0 must always remain valid.
+- Keep syscall entry deterministic.
+- Keep dispatcher behavior synchronized with dispatcher.md.
+- Review this document whenever syscall entry changes.
 
 ---
 
 ## License
-MIT or Apache 2.0 — to be determined.
+
+MIT or Apache 2.0 — TBD.

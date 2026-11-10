@@ -1,108 +1,240 @@
-# Bulldog Kernel – APIC Timer
+## Bulldog Kernel – APIC Timer
 
-This document describes Bulldog’s APIC timer subsystem: how the LAPIC timer is configured,
-how interrupts are delivered, and how the timer integrates with scheduling and timekeeping.
+Reviewed: November 2026
+
+This document describes Bulldog's current LAPIC timer implementation, interrupt delivery model, and future scheduler integration plans.
 
 It complements:
 
-- `apic.md`
-- `interrupts.md`
-- `time.md`
-- `scheduler.md` (interface)
+    apic.md
+    apic-implementation.md
+    interrupts.md
+    cpu-init.md
 
 ---
 
 ## 1. Overview
 
-The Local APIC (LAPIC) provides a per‑CPU timer capable of generating periodic interrupts.
-Bulldog uses the LAPIC timer for:
+Bulldog currently uses the Local APIC timer as its primary periodic interrupt source.
 
-- Future preemptive scheduling  
-- Timekeeping  
-- Sleep/wake primitives  
-- Profiling  
+Current responsibilities:
 
----
+    Kernel timekeeping
+    Tick generation
+    Interrupt verification
 
-## 2. Initialization Steps
+Future responsibilities include:
 
-1. Map LAPIC MMIO region  
-2. Enable LAPIC  
-3. Configure timer divisor  
-4. Load initial count  
-5. Set vector  
-6. Enable interrupts  
+    Preemptive scheduling
+    Sleep primitives
+    Timing services
+    Profiling
 
-Bulldog currently configures the timer in one‑shot mode for calibration.
+The scheduler is not currently integrated with timer interrupts.
 
 ---
 
-## 3. Timer Modes
+## 2. Initialization Sequence
 
-### One‑Shot  
-Interrupt fires once when count reaches zero.
+Current initialization flow:
 
-### Periodic  
+    Map LAPIC MMIO
+            ↓
+    Enable LAPIC
+            ↓
+    Configure divisor
+            ↓
+    Configure timer vector
+            ↓
+    Select periodic mode
+            ↓
+    Load initial count
+            ↓
+    Begin timer operation
+
+This sequence occurs during:
+
+    setup_apic()
+
+---
+
+## 3. Current Configuration
+
+Current timer settings:
+
+    Mode          = Periodic
+    Vector        = 0x31
+    Divisor       = 16
+    Initial Count = 500000
+
+These values are currently fixed.
+
+Dynamic calibration has not yet been implemented.
+
+---
+
+## 4. Timer Modes
+
+### One-Shot
+
+Interrupt fires once when the count reaches zero.
+
+Supported by hardware.
+
+Not currently used.
+
+---
+
+### Periodic
+
 Interrupt fires repeatedly at a fixed interval.
 
-### TSC‑Deadline (future)  
-Interrupt fires when TSC reaches a programmed value.
+Current Bulldog mode.
 
-Bulldog will use periodic mode for preemptive scheduling.
+Used for:
 
----
-
-## 4. Calibration
-
-Calibration determines:
-
-- Timer frequency  
-- Tick duration  
-- Conversion between LAPIC ticks and real time  
-
-Bulldog uses PIT or HPET (future) as a reference.
+    Timekeeping
+    Tick generation
 
 ---
 
-## 5. Interrupt Delivery
+### TSC-Deadline
 
-Timer interrupts are delivered to:
+Interrupt fires when the timestamp counter reaches a programmed target.
 
-```
-vector = TIMER_VECTOR
-```
+Not currently implemented.
 
-The handler:
-
-- Acknowledges interrupt  
-- Updates timekeeping state  
-- Triggers scheduler tick (future)  
+Future work.
 
 ---
 
-## 6. Integration with Scheduler
+## 5. Current Calibration Status
 
-Future Bulldog versions will:
+Dynamic calibration is not currently implemented.
 
-- Trigger a scheduler tick on each timer interrupt  
-- Save current process context  
-- Select next runnable process  
-- Perform context switch  
+The timer presently uses a fixed configuration:
 
-This enables preemptive multitasking.
+    Divisor       = 16
+    Initial Count = 500000
+
+Future revisions may introduce calibration using:
+
+    PIT
+    HPET
+    TSC
+
+or other timing sources.
 
 ---
 
-## 7. Future Enhancements
+## 6. Interrupt Delivery
 
-- TSC‑deadline mode  
-- Per‑CPU timers  
-- High‑resolution timers  
-- Sleep queues  
-- Profiling hooks  
-- Timekeeping API  
+Current timer interrupt vector:
+
+    0x31
+
+Current handler:
+
+    lapic_timer_handler()
+
+Execution flow:
+
+    LAPIC Interrupt
+            ↓
+    IDT Vector 0x31
+            ↓
+    IST1 Stack
+            ↓
+    tick()
+            ↓
+    send_eoi()
+            ↓
+    Return
+
+The handler remains intentionally lightweight.
+
+---
+
+## 7. IST Integration
+
+The timer executes using:
+
+    IST1
+
+Current rationale:
+
+    Fault isolation
+    Reliable interrupt processing
+    Reduced dependency on interrupted stacks
+
+IST1 is shared with:
+
+    Page Fault handling
+
+as documented in:
+
+    gdt.md
+
+---
+
+## 8. Timekeeping
+
+The timer currently contributes to:
+
+    Kernel tick tracking
+
+through:
+
+    tick()
+
+The timer serves as Bulldog's current time source infrastructure.
+
+Additional timing services remain future work.
+
+---
+
+## 9. Scheduler Integration
+
+Scheduler integration is planned but not currently implemented.
+
+Future timer responsibilities may include:
+
+    Scheduler tick generation
+    Time-slice management
+    Context-switch triggers
+    Process accounting
+
+Current timer interrupts do not perform scheduling operations.
+
+---
+
+## 10. Future Enhancements
+
+Planned improvements:
+
+    Dynamic timer calibration
+    TSC-deadline mode
+    Per-CPU timers
+    High-resolution timing
+    Sleep queues
+    Scheduler integration
+    Performance profiling
+    Advanced timekeeping services
+
+These capabilities are not currently implemented.
+
+---
+
+## Contributor Notes
+
+- The timer currently operates in periodic mode.
+- Preserve vector 0x31 assignments unless architecture documentation is updated.
+- Timer handlers must send EOI before returning.
+- Keep timer handlers lightweight.
+- Scheduler integration should build on the existing timer infrastructure.
 
 ---
 
 ## License
-MIT or Apache 2.0 — to be determined.
+
+MIT or Apache 2.0 — TBD.

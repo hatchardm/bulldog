@@ -1,218 +1,138 @@
-# Bulldog Kernel – Modern x86_64 Rust Kernel
+# Bulldog Kernel
 
-Bulldog is a custom operating system kernel written in Rust for the `x86_64-bulldog`
-architecture. It is built from scratch with a focus on clarity, safety, architectural
-discipline, and contributor accessibility.
+A modern x86_64 operating system kernel written in Rust.
 
-Bulldog explores low‑level OS concepts including:
+Bulldog is a from-scratch kernel project focused on architectural clarity, reproducible development, and incremental subsystem implementation. The project emphasizes understanding low-level operating system design while maintaining clean subsystem boundaries and comprehensive documentation.
 
-- Higher‑half kernel design  
-- Paging and memory management  
-- GDT/TSS initialization  
-- Interrupt handling and vector hygiene  
-- Privilege switching (Ring 3 ↔ Ring 0)  
-- Syscall interface and dispatcher  
-- Syscall harness and ABI validation  
-- Early user‑mode execution  
-- Planned VFS and ELF loader subsystems  
+The current architecture includes a custom UEFI bootloader, higher-half kernel execution, virtual memory management, process management, user-mode execution, FAT32 filesystem support, and a growing syscall interface.
 
-This repository contains both the kernel source and the full documentation tree.
+## Current Status
 
----
+### Implemented
+
+#### Core Platform
+- UEFI boot process
+- Custom bootloader
+- BootInfo handoff protocol
+- Higher-half kernel execution
+- Higher-Half Direct Map (HHDM)
+- Framebuffer initialization
+- Serial diagnostics
+
+#### CPU Architecture
+- GDT
+- TSS
+- Ring 3 support
+- IST stacks
+- IDT
+- Exception handling
+- APIC initialization
+- LAPIC timer interrupts
+- Interrupt handling
+
+#### Memory Management
+- Four-level paging
+- OffsetPageTable integration
+- Frame allocation
+- Frame recycling
+- LAPIC MMIO mapping
+- User-page allocation
+- User-stack allocation
+- ELF segment mapping
+- Process memory cleanup
+
+#### Filesystem
+- FAT32 support
+- RAM-disk support
+- Root-directory enumeration
+- VFS initialization
+- File-descriptor subsystem
+
+#### Syscalls
+- Syscall dispatcher
+- File-descriptor operations
+- Memory allocation operations
+- Process exit handling
+- User/kernel transitions
+
+#### Process Management
+- PID allocation
+- Process table
+- Process state tracking
+- Exit-code tracking
+- Current PID tracking
+- Process cleanup
+- Process chaining
+
+#### User Mode
+- Ring 3 execution
+- ELF validation
+- ELF loading
+- ELF segment mapping
+- User stacks
+- Syscall entry
+- Syscall return
+
+Verified programs:
+- /bin/hello
+- /bin/goodbye
+
+## Architecture Overview
+
+UEFI Firmware -> bootloader -> boot-proto -> kernel-bin -> kernel -> kernel_main() -> kernel_init() -> User Mode / Idle Loop
 
 ## Repository Structure
 
-```
-bulldog/
-│
-├── kernel/                 # Kernel source code
-│   ├── src/
-│   └── Cargo.toml
-│
-├── docs/
-│   ├── architecture/       # Hardware-facing subsystem documentation
-│   └── interface/          # User-facing kernel interface documentation
-│
-└── README.md               # This file
-```
+- bootloader/
+- boot-proto/
+- kernel/
+- kernel-bin/
+- user/
+- docs/
+- scripts/
 
-### Architecture Layer (`docs/architecture/`)
-Hardware‑facing subsystems:
+## Building
 
-- Memory & paging  
-- GDT/TSS  
-- Interrupts & IDT  
-- APIC/LAPIC  
-- Kernel layout  
-- Boot & initialization  
-- Context switching (CPU-level)  
+Requirements:
+- Rust Nightly
+- llvm-tools-preview
+- QEMU
+- OVMF
+- mtools
+- qemu-img
 
-### Interface Layer (`docs/interface/`)
-User‑mode boundary and kernel interface:
+Install:
 
-- Syscall ABI  
-- Syscall table  
-- Syscall dispatcher  
-- Syscall harness  
-- VFS design (planned)  
-- ELF loader (planned)  
-- Process model (interface-level)  
-- Privilege switching (user ↔ kernel transitions)
+    rustup component add llvm-tools-preview
 
-This separation keeps Bulldog contributor‑friendly and easy to navigate.
+Build and run:
 
----
+    .\\scripts\\build.ps1
 
-## Current Development Branch
+Build modes:
+1. Normal Build
+2. Serial Logging
+3. Syscall Tests
+4. Serial Logging + Syscall Tests
+5. Usermode Hello
+6. Usermode Goodbye
+7. Usermode Chain
 
-The active milestone branch is:
+The build pipeline builds the bootloader, kernel, user programs, FAT image, EFI System Partition, and launches QEMU.
 
-```
-feature/kernel-init-rebuild
-```
+## Development Branch
 
-This branch focuses on:
+Current active development:
 
-- Rebuilding kernel initialization  
-- Cleaning subsystem boundaries  
-- Rewriting text/console and framebuffer integration  
-- Validating syscall entry/exit paths  
-- Preparing for user‑mode execution  
-- Establishing the interface documentation tree  
-
-Previous milestone branches:
-
-```
-main                → Latest stable kernel build (APIC baseline)
-feature/pic8259     → Legacy PIC baseline
-feature/apic        → APIC + LAPIC timer milestone
-feature/syscall     → Privilege switching + syscall infrastructure
-```
-
----
-
-## Getting Started
-
-### Prerequisites
-
-You will need:
-
-- Nightly Rust toolchain  
-- `llvm-tools-preview` component  
-- QEMU (recommended) or real hardware with APIC support  
-
-Install required Rust components:
-
-```bash
-rustup component add llvm-tools-preview
-```
-
----
-
-## Build Instructions
-
-Clone the repository:
-
-```bash
-git clone https://github.com/hatchardm/bulldog.git
-cd bulldog
-```
-
-Build the kernel:
-
-```bash
-cargo build -Z bindeps
-```
-
-Run in QEMU:
-
-```bash
-qemu-system-x86_64 \
-  -kernel target/x86_64-bulldog/debug/bulldog \
-  -serial stdio \
-  -smp 2 \
-  -enable-kvm
-```
-
----
-
-## Syscall Interface Overview
-
-Bulldog implements a simple, stable syscall ABI:
-
-| Number | Name   | Handler Function           | Notes |
-|--------|--------|----------------------------|-------|
-| 1      | write  | `sys_write`                | FD write |
-| 2      | exit   | `sys_exit_trampoline`      | Process exit |
-| 3      | open   | `sys_open`                 | Returns FD |
-| 4      | read   | `sys_read`                 | FD read |
-| 5      | alloc  | `sys_alloc_trampoline`     | Allocates memory |
-| 6      | free   | `sys_free_trampoline`      | Frees memory |
-| 7      | close  | `sys_close_trampoline`     | Closes FD |
-
-See:
-
-- `docs/interface/syscall.md`  
-- `docs/interface/syscall-table.md`  
-- `docs/interface/syscall-harness-guide.md`  
-- `docs/interface/dispatcher.md`
-
----
-
-## Roadmap
-
-### Near-Term
-- Finalize kernel init rebuild  
-- Validate syscall entry/exit paths  
-- Establish minimal user‑mode execution  
-- Implement ELF loader  
-- Implement basic VFS (ramfs/devfs)
-
-### Mid-Term
-- Cooperative scheduler  
-- Preemptive scheduling via LAPIC timer  
-- Process creation syscalls  
-- FD table integration with VFS  
-- User-mode heap allocator
-
-### Long-Term
-- Signals  
-- IPC  
-- Multi-threading  
-- Multi-CPU load balancing  
-- ext2/ext4 filesystem support  
-- Dynamic linker / shared libraries
-
----
+    feature/usermode
 
 ## Contributing
 
-Bulldog is designed for open-source collaboration. Contributors interested in kernel
-development, Rust internals, or low-level architecture are welcome.
-
-### Contributor Workflow
-
-- Keep commits atomic and descriptive  
-- Document unsafe blocks with justification  
-- Test under QEMU before submitting pull requests  
-- Align contributions with roadmap milestones  
-- Update relevant documentation in `docs/architecture/` or `docs/interface/`  
-- Ensure syscall harness tests remain deterministic  
-
----
+- Keep commits focused
+- Justify unsafe code
+- Update documentation with architectural changes
+- Preserve reproducibility and observability
 
 ## License
 
-MIT or Apache 2.0 — to be determined.
-
----
-
-## Disclaimer
-
-Bulldog and its subsystems (paging, interrupts, APIC, syscalls, VFS, ELF loader, and related
-features) are experimental and provided “as is” without warranty of any kind. They are
-intended for research, learning, and contributor experimentation. Running Bulldog on real
-hardware may expose quirks or limitations. Use at your own risk.
-
-
-
+MIT or Apache 2.0 — TBD.
