@@ -54,7 +54,15 @@ pub fn schedule() -> Option<Pid> {
 
 /// Future scheduler entry point from timer ticks.
 pub fn scheduler_tick() {
-    // Reserved for future timer-driven scheduling.
+    let ticks = crate::time::get_ticks();
+
+    if ticks % 1000 == 0 {
+        log::info!(
+            "[SCHED] tick={} current={}",
+            ticks,
+            crate::process::current_pid()
+        );
+    }
 }
 
 /// Dump scheduler state to the serial log.
@@ -77,3 +85,4 @@ pub fn dump_scheduler_state() {
 
     info!("=================");
 }
+

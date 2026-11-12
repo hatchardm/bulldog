@@ -7,7 +7,7 @@ use crate::time::tick;
 use x86_64::instructions::interrupts;
 use core::cell::UnsafeCell;
 use crate::syscall::SYSCALL_VECTOR;
-
+use crate::scheduler::scheduler_tick;
 /// LAPIC timer interrupt vector.
 pub const LAPIC_TIMER_VECTOR: u8 = 0x31;
 
@@ -256,6 +256,7 @@ extern "x86-interrupt" fn security_exception_handler(stack_frame: InterruptStack
 /// Increments kernel tick and sends EOI to LAPIC.
 extern "x86-interrupt" fn lapic_timer_handler(_stack_frame: InterruptStackFrame) {
     tick();
+    scheduler_tick();
     send_eoi();
 }
 
