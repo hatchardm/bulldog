@@ -66,6 +66,7 @@ pub mod font8x16;
 pub mod paging;
 pub mod fs;
 pub mod process;
+pub mod scheduler;
 
 #[cfg(feature = "syscall_tests")]
 mod tests;
@@ -291,7 +292,23 @@ pub fn kernel_init(
     init_fd_table_with_std();
     info!("FD table initialized");
 
+    #[cfg(feature = "scheduler_test")]
+{
+    use crate::process;
+    use crate::scheduler;
 
+    let p1 = process::create_process("sched_test_1");
+    let p2 = process::create_process("sched_test_2");
+
+    process::set_current_pid(p1);
+    process::mark_running(p1);
+
+    scheduler::dump_scheduler_state();
+
+    scheduler::schedule();
+
+    scheduler::dump_scheduler_state();
+}
 
 // ------------------------------------------------------------------
 // Option 5: usermode hello

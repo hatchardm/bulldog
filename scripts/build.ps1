@@ -14,9 +14,10 @@ Write-Host "  4) Build with BOTH serial logging + syscall tests"
 Write-Host "  5) Usermode hello   (exit → kernel idle)"
 Write-Host "  6) Usermode goodbye (exit → kernel idle)"
 Write-Host "  7) Usermode chain   (hello → goodbye → idle)"
+Write-Host "  8) Scheduler smoke test"
 Write-Host ""
 
-$choice = Read-Host "Enter choice (1-7)"
+$choice = Read-Host "Enter choice (1-8)"
 
 # Feature names only (no --features prefix)
 $features = ""
@@ -49,6 +50,10 @@ switch ($choice) {
     "7" {
         Write-Host "[mode] Usermode chain (hello → goodbye) enabled"
         $features = "usermode_chain"
+    }
+    "8" {
+        Write-Host "[mode] Scheduler smoke test enabled"
+        $features = "scheduler_test"
     }
     default {
         Write-Host "[mode] Invalid choice. Defaulting to normal build."
