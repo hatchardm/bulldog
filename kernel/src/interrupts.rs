@@ -256,6 +256,7 @@ extern "x86-interrupt" fn security_exception_handler(stack_frame: InterruptStack
 /// Increments kernel tick and sends EOI to LAPIC.
 extern "x86-interrupt" fn lapic_timer_handler(_stack_frame: InterruptStackFrame) {
     tick();
+    #[cfg(feature = "scheduler_test")]
     scheduler_tick();
     send_eoi();
 }

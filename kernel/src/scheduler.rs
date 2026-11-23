@@ -12,6 +12,8 @@ use crate::process::{
     PROCESS_TABLE,
 };
 
+const SCHED_INTERVAL: u64 = 1000;
+
 /// Return the first READY process found in the process table.
 pub fn next_ready_pid() -> Option<Pid> {
     let table = PROCESS_TABLE.lock();
@@ -33,8 +35,12 @@ pub fn next_ready_pid() -> Option<Pid> {
 /// No context switching is performed yet.
 pub fn schedule() -> Option<Pid> {
     let current = current_pid();
-
     let next = next_ready_pid()?;
+
+    if current == next {
+            return Some(next);
+        }
+
 
     if current != 0 && current != next {
         set_process_state(current, ProcessState::Ready);
@@ -58,12 +64,25 @@ pub fn scheduler_tick() {
 
     if ticks % 1000 == 0 {
         log::info!(
-            "[SCHED] tick={} current={}",
+            "[SCHED] tick={} current={} ready={} running={} exited={}",
             ticks,
-            crate::process::current_pid()
+            current_pid(),
+            runnable_count(),
+            running_count(),
+            exited_count(),
         );
     }
+
+    if ticks % SCHED_INTERVAL == 0 {
+        log::info!(
+            "[SCHED] scheduling opportunity tick={}",
+            ticks
+        );
+
+        schedule();
+    }
 }
+
 
 /// Dump scheduler state to the serial log.
 pub fn dump_scheduler_state() {
@@ -71,6 +90,13 @@ pub fn dump_scheduler_state() {
 
     info!("=== SCHEDULER ===");
     info!("current_pid={}", current);
+
+    info!(
+        "ready={} running={} exited={}",
+        runnable_count(),
+        running_count(),
+        exited_count()
+    );
 
     let table = PROCESS_TABLE.lock();
 
@@ -84,5 +110,32 @@ pub fn dump_scheduler_state() {
     }
 
     info!("=================");
+}
+
+pub fn runnable_count() -> usize {
+    let table = PROCESS_TABLE.lock();
+
+    table
+        .iter()
+        .filter(|p| p.state == ProcessState::Ready)
+        .count()
+}
+
+pub fn running_count() -> usize {
+    let table = PROCESS_TABLE.lock();
+
+    table
+        .iter()
+        .filter(|p| p.state == ProcessState::Running)
+        .count()
+}
+
+pub fn exited_count() -> usize {
+    let table = PROCESS_TABLE.lock();
+
+    table
+        .iter()
+        .filter(|p| p.state == ProcessState::Exited)
+        .count()
 }
 
